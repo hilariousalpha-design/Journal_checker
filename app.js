@@ -18,7 +18,7 @@ function escapeHtml(s) {
 
 async function loadDatabase() {
     if (state.db) return state.db;
-    const response = await fetch("./data/journals.json", { cache: "no-store" });
+    const response = await fetch("/Journal_checker/data/journals.json", { cache: "no-store" });
     if (!response.ok) throw new Error("Journal database could not be loaded.");
     state.db = await response.json();
     return state.db;
