@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>JournalCheck — Journal Verification Tool</title>
+
+    <meta name="description"
+          content="Check journal indexing, journal information, and publication risk indicators with JournalCheck.">
+
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f6f8fc;
+            color: #172033;
+        }
+
+        header {
+            background: white;
+            border-bottom: 1px solid #e5e7eb;
+            padding: 20px 0;
+        }
+
+        .container {
+            width: 90%;
+            max-width: 1100px;
+            margin: auto;
+        }
+
+        .nav {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 25px;
+            font-weight: bold;
+        }
+
+        .logo span {
+            color: #3157d5;
+        }
+
+        .nav-links a {
+            margin-left: 25px;
+            text-decoration: none;
+            color: #5f6b7a;
+            font-size: 14px;
+        }
+
+        .hero {
+            padding: 90px 0 70px;
+            text-align: center;
+            background: linear-gradient(180deg, #ffffff, #f6f8fc);
+        }
+
+        .tag {
+            color: #3157d5;
+            font-size: 13px;
+            font-weight: bold;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+        }
+
+        h1 {
+            font-size: 55px;
+            line-height: 1.05;
+            margin-bottom: 20px;
+        }
+
+        .hero p {
+            max-width: 700px;
+            margin: auto;
+            color: #687386;
+            font-size: 19px;
+            line-height: 1.6;
+        }
+
+        .search-box {
+            max-width: 800px;
+            margin: 35px auto 0;
+            background: white;
+            padding: 25px;
+            border-radius: 16px;
+            border: 1px solid #e1e5ec;
+            box-shadow: 0 15px 40px rgba(30, 45, 80, 0.08);
+            text-align: left;
+        }
+
+        .search-box label {
+            display: block;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .search-row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .search-row input {
+            flex: 1;
+            padding: 15px;
+            border: 1px solid #cbd2df;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+
+        .search-row button {
+            padding: 15px 24px;
+            border: none;
+            border-radius: 10px;
+            background: #3157d5;
+            color: white;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .search-row button:hover {
+            background: #2444ad;
+        }
+
+        .note {
+            margin-top: 10px;
+            color: #7a8494;
+            font-size: 13px;
+        }
+
+        .features {
+            padding: 70px 0;
+        }
+
+        .features h2 {
+            text-align: center;
+            font-size: 36px;
+            margin-bottom: 40px;
+        }
+
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 18px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border: 1px solid #e1e5ec;
+            border-radius: 14px;
+        }
+
+        .card h3 {
+            margin-bottom: 10px;
+        }
+
+        .card p {
+            color: #697487;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .methodology {
+            background: white;
+            padding: 70px 0;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .methodology-content {
+            max-width: 800px;
+            margin: auto;
+            text-align: center;
+        }
+
+        .methodology h2 {
+            font-size: 36px;
+            margin-bottom: 15px;
+        }
+
+        .methodology p {
+            color: #687386;
+            line-height: 1.7;
+        }
+
+        footer {
+            padding: 30px;
+            text-align: center;
+            color: #7a8494;
+            font-size: 13px;
+        }
+
+        @media (max-width: 800px) {
+
+            h1 {
+                font-size: 40px;
+            }
+
+            .cards {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .search-row {
+                flex-direction: column;
+            }
+
+            .nav-links {
+                display: none;
+            }
+        }
+
+        @media (max-width: 500px) {
+
+            .cards {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <div class="container nav">
+
+        <div class="logo">
+            Journal<span>Check</span>
+        </div>
+
+        <div class="nav-links">
+            <a href="#features">Features</a>
+            <a href="#methodology">Methodology</a>
+        </div>
+
+    </div>
+</header>
+
+
+<section class="hero">
+
+    <div class="container">
+
+        <div class="tag">
+            Researcher-first journal verification
+        </div>
+
+        <h1>
+            Check a journal<br>
+            before you submit.
+        </h1>
+
+        <p>
+            Verify journal indexing, identity, publication information,
+            and risk indicators using evidence rather than relying on
+            a single claim or AI opinion.
+        </p>
+
+
+        <div class="search-box">
+
+            <label for="journal">
+                Journal name, ISSN or eISSN
+            </label>
+
+            <div class="search-row">
+
+                <input
+                    id="journal"
+                    type="text"
+                    placeholder="Example: Journal of Tourism Research or 1234-5678"
+                >
+
+                <button onclick="checkJournal()">
+                    Check Journal
+                </button>
+
+            </div>
+
+            <div class="note">
+                JournalCheck will provide evidence-based results.
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<section class="features" id="features">
+
+    <div class="container">
+
+        <h2>
+            What JournalCheck will check
+        </h2>
+
+        <div class="cards">
+
+            <div class="card">
+                <h3>🔎 Journal Identity</h3>
+                <p>
+                    Verify the journal name, ISSN, eISSN,
+                    publisher and other identifying information.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>📚 Indexing</h3>
+                <p>
+                    Check SCIE, SSCI, AHCI, ESCI, JCR and
+                    Scopus indexing against our datasets.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>⚠️ Risk Screening</h3>
+                <p>
+                    Identify publication-transparency and
+                    other warning indicators.
+                </p>
+            </div>
+
+            <div class="card">
+                <h3>🤖 AI Explanation</h3>
+                <p>
+                    AI will explain the collected evidence
+                    in a simple researcher-friendly report.
+                </p>
+            </div>
+
+        </div>
+
+    </div>
+
+</section>
+
+
+<section class="methodology" id="methodology">
+
+    <div class="methodology-content">
+
+        <div class="tag">
+            Methodology
+        </div>
+
+        <h2>
+            Evidence first. AI second.
+        </h2>
+
+        <p>
+            JournalCheck is designed as a screening and verification
+            tool. Missing information will not automatically be treated
+            as proof of misconduct. The system will distinguish verified
+            evidence, unavailable evidence and warning indicators.
+        </p>
+
+    </div>
+
+</section>
+
+
+<footer>
+
+    © 2026 JournalCheck · Built for researchers
+
+</footer>
+
+
+<script>
+
+function checkJournal() {
+
+    const journal =
+        document.getElementById("journal").value.trim();
+
+    if (!journal) {
+
+        alert("Please enter a journal name, ISSN or eISSN.");
+
+        return;
+    }
+
+    alert(
+        "JournalCheck database connection will be added next.\n\n" +
+        "Your search: " + journal
+    );
+}
+
+</script>
+
+</body>
+</html>
