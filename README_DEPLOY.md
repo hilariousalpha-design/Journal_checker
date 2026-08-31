@@ -1,35 +1,24 @@
-# JournalCheck V3.2 — live evidence enrichment build
+# JournalCheck V3.3 — Search Reliability Fix
 
-## What is fixed
-- Keeps the 50,608-record master database and July 2026 Scopus enrichment.
-- Correctly reads compact Scopus fields: `sco`, `sa`, `st`, `oa`, `cov`, `scopus_id`.
-- Adds live OpenAlex source lookup by ISSN.
-- Adds live Crossref journal lookup by ISSN.
-- Attempts live DOAJ journal lookup; if browser CORS blocks it, status remains **Unknown** and the official DOAJ record link is shown.
-- Adds Crossref / Retraction Watch retraction-related update check.
-- Adds ISSN Portal, official journal, DOAJ, OpenAlex, Crossref, Scopus, SCImago and Think.Check.Submit links.
-- Adds targeted Google investigation links for indexing claims, predatory/hijacked warnings, retractions/expressions of concern, and general discovery.
-- **Risk score no longer penalizes a journal simply for not being in SCIE/SSCI/AHCI/JCR or for missing metadata.** Absence is information, not evidence of misconduct.
-- Source conflicts, identifier mismatches, explicit warning flags and retraction-related updates are treated as review signals.
-- Unknown is kept separate from No.
-- Methodology section remains removed from the public page.
-- Search auto-scrolls to results.
-
-## Important limitation: Google
-GitHub Pages cannot safely/consistently scrape Google Search results. Google's current Custom Search JSON API requires a configured search engine and API key, and Google states that the API is closed to new customers. JournalCheck therefore provides targeted Google investigation links instead of scraping snippets or treating Google results as authoritative evidence.
-
-## Source hierarchy
-1. Official journal / publisher and ISSN Portal for identity and policy claims.
-2. Uploaded Scopus / Web of Science datasets for indexing fields supplied by the researcher.
-3. DOAJ, OpenAlex and Crossref for independent metadata confirmation.
-4. SCImago for SJR/quartile when a verified SCImago record is available.
-5. Crossref / Retraction Watch for article-level retraction-related evidence.
-6. Google is an investigation/discovery layer only; search results must be opened and verified.
-
-## Deploy
-Replace these in GitHub:
+## Replace these files in GitHub
 - `index.html`
 - `app.js`
 - `data/journals.json`
 
-Commit all together and wait for GitHub Pages to deploy. Then use `Ctrl+F5`.
+## What V3.3 fixes
+1. Prevents a missing optional `googleBtn` element from crashing the whole search/render pipeline.
+2. Fixes the OpenAlex ISSN request by preserving canonical ISSN formatting (for example `0390-590X`) instead of stripping the hyphen.
+3. Runs OpenAlex, Crossref, DOAJ and Crossref retraction checks in parallel rather than sequentially.
+4. Uses shorter timeouts so a blocked external API cannot leave the interface stuck on `Searching…` for a long time.
+5. Uses `Promise.allSettled()` so one failed external source cannot prevent results from rendering.
+6. Adds a final render safety net: if enrichment fails, the local journal result still appears.
+7. Keeps `Unknown` separate from `No` and does not turn missing metadata into a predatory-journal finding.
+
+## Deployment
+Commit all three files together. Wait for GitHub Pages to finish deploying, then hard refresh with `Ctrl+F5`.
+
+Test URL example:
+`https://hilariousalpha-design.github.io/Journal_checker/?q=Research+in+Hospitality+Management`
+
+## Expected behavior
+Search should change from `Searching…` to `Complete` and display the local result even when an external API is unavailable. OpenAlex should no longer fail simply because the ISSN hyphen was removed.
