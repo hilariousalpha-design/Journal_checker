@@ -345,9 +345,20 @@
     const scopusUrl=`https://www.scopus.com/sources`;
     const tcsUrl=`https://thinkchecksubmit.org/journals/`;
 
+    let resultsBox=$("resultsBox");
+    if(!resultsBox){
+      const resultsSection=$("results");
+      if(resultsSection){
+        resultsBox=document.createElement("div");
+        resultsBox.id="resultsBox";
+        resultsBox.className="journal-card hide";
+        resultsSection.appendChild(resultsBox);
+      }
+    }
+    if(!resultsBox) throw new Error("Results container is missing from the page");
     const googleBtn=$("googleBtn");
     if(googleBtn) googleBtn.href=googlePred;
-    $("resultsBox").innerHTML=`
+    resultsBox.innerHTML=`
       <div class="journal-top">
         <div>
           <div class="label">Best verified match</div>
@@ -414,7 +425,7 @@
       </div>
     `;
     if($("resultHead")) $("resultHead").classList.remove("hide");
-    if($("resultsBox")) $("resultsBox").classList.remove("hide");
+    if(resultsBox) resultsBox.classList.remove("hide");
     if($("emptyBox")) $("emptyBox").classList.add("hide");
     if($("resultTitle")) $("resultTitle").textContent=`${matches.length} result${matches.length===1?"":"s"} for “${query}”`;
     if($("matchSummary")) $("matchSummary").textContent=`Best match selected using title/ISSN/eISSN matching. ${matches.length>1?`${matches.length} close records were found; the strongest match is shown.`:""}`;
@@ -460,16 +471,15 @@
     $("#recent").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{$("#journalInput").value=b.dataset.q;runSearch(b.dataset.q)}));
   }
 
-  $("#searchForm").addEventListener("submit",e=>{e.preventDefault();runSearch($("#journalInput").value)});
-  $("#clearBtn").addEventListener("click",()=>{history.replaceState({}, "", location.pathname);$("#journalInput").value="";$("#resultHead").classList.add("hide");$("#resultsBox").classList.add("hide");$("#emptyBox").classList.remove("hide");$("#emptyBox").textContent="Search for a journal title, ISSN or eISSN to begin.";$("#searchStatus").textContent="Ready"});
-  $("#printBtn").addEventListener("click",()=>window.print());
-  $("#themeBtn").addEventListener("click",()=>{document.body.classList.toggle("dark");localStorage.setItem("journalcheck_theme",document.body.classList.contains("dark")?"dark":"light")});
-  if(localStorage.getItem("journalcheck_theme")==="dark") document.body.classList.add("dark");
-
   window.addEventListener("DOMContentLoaded", async ()=>{
+    $("#searchForm")?.addEventListener("submit",e=>{e.preventDefault();runSearch($("#journalInput")?.value||"")});
+    $("#clearBtn")?.addEventListener("click",()=>{history.replaceState({}, "", location.pathname);if($("#journalInput")) $("#journalInput").value="";$("#resultHead")?.classList.add("hide");$("#resultsBox")?.classList.add("hide");$("#emptyBox")?.classList.remove("hide");if($("#emptyBox")) $("#emptyBox").textContent="Search for a journal title, ISSN or eISSN to begin.";if($("#searchStatus")) $("#searchStatus").textContent="Ready"});
+    $("#printBtn")?.addEventListener("click",()=>window.print());
+    $("#themeBtn")?.addEventListener("click",()=>{document.body.classList.toggle("dark");localStorage.setItem("journalcheck_theme",document.body.classList.contains("dark")?"dark":"light")});
+    if(localStorage.getItem("journalcheck_theme")==="dark") document.body.classList.add("dark");
     renderRecent();
     const ok=await loadDatabase();
     const q=new URL(location.href).searchParams.get("q");
-    if(ok && q){$("#journalInput").value=q;await runSearch(q,true);}
+    if(ok && q){if($("#journalInput")) $("#journalInput").value=q;await runSearch(q,true);}
   });
 })();
