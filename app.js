@@ -1,159 +1,270 @@
-(() => {
-  "use strict";
+const $ = (s, r=document) => r.querySelector(s);
+const $$ = (s, r=document) => [...r.querySelectorAll(s)];
 
-  const DATABASE_URL = "./data/journals.json";
-  const MAX_RESULTS = 20;
-  const RECENT_KEY = "journalcheck_recent_searches_v2";
+const state = {
+  db: null, records: [], results: [], selected: null, query: "",
+  externalCache: new Map(), recent: JSON.parse(localStorage.getItem("jc_recent") || "[]")
+};
 
-  const state = { database:null, records:[], entries:[], byId:new Map(), byTitle:new Map(), prepared:false, loadingPromise:null };
-  const $ = (s,r=document) => r.querySelector(s);
+const FIELD = {
+  title: ["t","title","journal_title","journal","name"],
+  issn: ["i","issn","pissn","print_issn","ISSN"],
+  eissn: ["e","eissn","online_issn","electronic_issn","EISSN"],
+  publisher: ["p","publisher","publisher_name"],
+  country: ["c","country","publisher_country"],
+  language: ["l","language","lang"],
+  scie: ["scie","SCIE"],
+  ssci: ["ssci","SSCI"],
+  ahci: ["ahci","AHCI"],
+  esci: ["esci","ESCI"],
+  jcr: ["jcr","jcr_2025","JCR 2025","jcr2025"],
+  scopus: ["scopus","Scopus"],
+  scopusActive: ["scopus_active","scopusActive","scopus_active_status","Scopus Active"],
+  scopusSourceType: ["scopus_source_type","scopusSourceType","source_type"],
+  scopusOA: ["scopus_oa","scopusOA","scopus_oa_status","oa_status"],
+  coverage: ["coverage","scopus_coverage","coverage_years"],
+  doaj: ["doaj","DOAJ"],
+  openalex: ["openalex","OpenAlex"],
+  crossref: ["crossref","Crossref"]
+};
 
-  function normalize(v){return String(v??"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().replace(/[^a-z0-9]+/g,"").trim()}
-  function tokens(v){return String(v??"").normalize("NFKD").replace(/[\u0300-\u036f]/g,"").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)}
-  function escapeHTML(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]))}
-  function display(v){const s=String(v??"").trim();return s||"Not available"}
-  function boolState(v){if(typeof v==='boolean')return v?'yes':'no';const s=String(v??"").trim().toLowerCase();if(["true","yes","active","indexed"].includes(s))return"yes";if(["false","no","inactive","not indexed"].includes(s))return"no";return"neutral"}
-  function badge(v){const s=boolState(v);const t=s==='yes'?'✓ Yes':s==='no'?'✕ No':'Not available';return `<span class="badge ${s}">${t}</span>`}
-  function status(v){const s=boolState(v);return s==='yes'?'Yes':s==='no'?'No':'Not available'}
+function val(r, key) {
+  const keys = FIELD[key] || [];
+  for (const k of keys) if (r && r[k] !== undefined && r[k] !== null && String(r[k]).trim() !== "") return r[k];
+  return "";
+}
+function clean(v){ return String(v ?? "").replace(/\s+/g," ").trim(); }
+function norm(v){ return clean(v).toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g,"").replace(/[^\p{L}\p{N}\s-]/gu," ").replace(/\s+/g," ").trim(); }
+function normIssn(v){ return clean(v).replace(/[^0-9Xx]/g,"").toUpperCase(); }
+function formatIssn(v){ const n=normIssn(v); return n.length===8 ? `${n.slice(0,4)}-${n.slice(4)}` : clean(v); }
+function boolValue(v){
+  if (typeof v === "boolean") return v;
+  const x = norm(v);
+  if (["yes","true","1","y","indexed","active","included"].includes(x)) return true;
+  if (["no","false","0","n","not indexed","inactive","excluded"].includes(x)) return false;
+  return null;
+}
+function badge(v){
+  const b=boolValue(v);
+  if(b===true) return `<span class="badge yes">✓ Yes</span>`;
+  if(b===false) return `<span class="badge no">× No</span>`;
+  return `<span class="badge na">— Not available</span>`;
+}
+function esc(s){ return String(s ?? "").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m])); }
 
-  function setLoading(message,show=true){const el=$("#loading-status");if(!el)return;el.textContent=message;el.classList.toggle("hidden",!show)}
-
-  function prepareDatabase(db){
-    state.database=db;state.records=Array.isArray(db.records)?db.records:[];state.entries=[];state.byId.clear();state.byTitle.clear();
-    state.records.forEach((j,index)=>{
-      const i=normalize(j.i),e=normalize(j.e),t=normalize(j.t);
-      const entry={journal:j,index,title:t,titleTokens:tokens(j.t),idKeys:[i,e].filter(Boolean)};
-      state.entries.push(entry);
-      entry.idKeys.forEach(k=>state.byId.set(k,entry));
-      if(t&&!state.byTitle.has(t))state.byTitle.set(t,entry);
-    });
-    state.prepared=true;
-    $("#database-count").textContent=state.records.length.toLocaleString();
-    $("#database-version").textContent=display(db.version);
-    $("#database-status-label").textContent="Ready";
-    $("#database-status").className="dot ready";
+async function loadDB(){
+  setText("#dbState","Loading");
+  try{
+    const res=await fetch("./data/journals.json",{cache:"no-store"});
+    if(!res.ok) throw new Error(`Database request failed (${res.status})`);
+    const json=await res.json();
+    state.db=json;
+    state.records=Array.isArray(json) ? json : (Array.isArray(json.records) ? json.records : []);
+    if(!state.records.length) throw new Error("The database contains no journal records.");
+    setText("#dbState","Ready"); setText("#recordCount",state.records.length.toLocaleString());
+    setText("#datasetVersion",clean(json.version)||"1.0");
+    $("#datasetPill").textContent=`${state.records.length.toLocaleString()} journal records`;
+    buildQuickChips();
+  }catch(err){
+    setText("#dbState","Error"); $("#datasetPill").textContent="Database error";
+    showToast(err.message);
+    $("#resultsSection").hidden=false;
+    $("#resultsList").innerHTML=`<div class="error-box"><strong>Journal database could not be loaded.</strong><br>${esc(err.message)}<br><br>Make sure <code>data/journals.json</code> is published with the site.</div>`;
   }
-
-  async function loadDatabase(){
-    if(state.prepared)return state.database;
-    if(state.loadingPromise)return state.loadingPromise;
-    state.loadingPromise=(async()=>{
-      setLoading("Loading the master database…",true);
-      try{
-        const res=await fetch(`${DATABASE_URL}?v=20260831`,{cache:"no-store"});
-        if(!res.ok)throw new Error(`Database request failed (HTTP ${res.status}).`);
-        const db=await res.json();
-        if(!db||!Array.isArray(db.records))throw new Error("Invalid database format.");
-        prepareDatabase(db);setLoading("Database loaded.",false);return db;
-      }catch(err){
-        console.error("JournalCheck database error:",err);
-        $("#database-status-label").textContent="Unavailable";$("#database-status").className="dot error";
-        setLoading("The database could not be loaded. Check that data/journals.json exists and is valid JSON.",true);throw err;
-      }finally{state.loadingPromise=null}
-    })();
-    return state.loadingPromise;
-  }
-
-  function score(entry,q,nq,qt){
-    const j=entry.journal,title=entry.title,i=normalize(j.i),e=normalize(j.e);
-    if(i===nq||e===nq)return 100000;
-    if(title===nq)return 90000;
-    let s=0;
-    if(title.startsWith(nq))s+=6000;
-    if(title.includes(nq))s+=4000;
-    let exact=0,partial=0;
-    for(const token of qt){
-      if(entry.titleTokens.includes(token))exact++;
-      else if(entry.titleTokens.some(tt=>tt.startsWith(token)))partial++;
-      else if(token.length>=4&&entry.titleTokens.some(tt=>tt.includes(token)))partial+=.5;
-    }
-    s+=exact*900+partial*250;
-    const publisher=normalize(j.p),categories=normalize(j.wc);
-    if(publisher.includes(nq))s+=400;
-    if(categories.includes(nq))s+=250;
-    // Small similarity bonus for a partially typed title.
-    if(nq.length>=5){let common=0;while(common<Math.min(nq.length,title.length)&&nq[common]===title[common])common++;s+=Math.min(common*20,300)}
-    // Prefer journals over non-journal source types when otherwise tied.
-    if(String(j.st).toLowerCase()==='journal')s+=10;
-    return s;
-  }
-
-  function searchDatabase(query){
-    const nq=normalize(query);if(!nq)return[];
-    const id=state.byId.get(nq);if(id)return[{...id,score:100000}];
-    const title=state.byTitle.get(nq);if(title)return[{...title,score:90000}];
-    const qt=tokens(query),matches=[];
-    for(const entry of state.entries){const s=score(entry,query,nq,qt);if(s>0)matches.push({...entry,score:s})}
-    matches.sort((a,b)=>b.score-a.score||a.title.localeCompare(b.title));
-    return matches.slice(0,MAX_RESULTS);
-  }
-
-  function info(label,v){return `<div class="info"><span>${escapeHTML(label)}</span><strong>${escapeHTML(display(v))}</strong></div>`}
-  function indexCard(label,v){return `<div class="index-card"><span>${escapeHTML(label)}</span>${badge(v)}</div>`}
-
-  function interpretation(j){
-    const p=[];
-    if(boolState(j.sa)==='yes')p.push("The dataset marks this source as Scopus Active.");
-    else if(boolState(j.sco)==='yes')p.push("The dataset marks this source as Scopus-listed.");
-    if(boolState(j.jcr)==='yes')p.push("The dataset marks this journal as present in JCR 2025.");
-    const w=[j.scie,j.ssci,j.ahci,j.esci].some(v=>boolState(v)==='yes');
-    if(w)p.push("At least one Web of Science collection field is marked positive in the dataset.");
-    if(!p.length)p.push("No positive indexing statement was generated beyond the fields shown above.");
-    return p;
-  }
-
-  function completeness(j){
-    const keys=["t","i","e","p","c","l","wc","st","oa","cov","scie","ssci","ahci","esci","jcr","sco","sa"];
-    const present=keys.filter(k=>j[k]!==undefined&&j[k]!==null&&(typeof j[k]==='boolean'||String(j[k]).trim()!=="")).length;
-    return Math.round(present/keys.length*100);
-  }
-
-  function renderResults(matches,q){
-    const section=$("#results");if(!section)return;
-    if(!matches.length){section.innerHTML=`<div class="container"><div class="empty"><span class="eyebrow">Search result</span><h2>No matching journal found</h2><p>Nothing matching <strong>“${escapeHTML(q)}”</strong> was found in the current master dataset.</p><p>Try the full journal title, ISSN/eISSN, or a shorter distinctive part of the title.</p></div></div>`;return}
-    const cards=matches.map((m,n)=>{
-      const j=m.journal,points=interpretation(j).map(x=>`<li>${escapeHTML(x)}</li>`).join("");
-      return `<article class="journal-card"><div class="card-top"><div><span class="match">${n===0?'BEST MATCH':'MATCH'}</span><h2 class="journal-title">${escapeHTML(display(j.t))}</h2><p class="publisher">${escapeHTML(display(j.p))}</p></div><button class="copy" data-index="${n}" type="button">Copy result</button></div>
-      <div class="info-grid">${info('ISSN',j.i)}${info('eISSN',j.e)}${info('Country',j.c)}${info('Language',j.l)}</div>
-      <h3>Indexing profile</h3><div class="index-grid">${indexCard('SCIE',j.scie)}${indexCard('SSCI',j.ssci)}${indexCard('AHCI',j.ahci)}${indexCard('ESCI',j.esci)}${indexCard('JCR 2025',j.jcr)}${indexCard('Scopus',j.sco)}${indexCard('Scopus Active',j.sa)}</div>
-      <h3>Publication information</h3><div class="details">${info('Scopus source type',j.st)}${info('Scopus OA',j.oa)}${info('Coverage',j.cov)}${info('Subject categories',j.wc)}</div>
-      <div class="interpret"><div class="interpret-box"><h4>Evidence-based interpretation</h4><ul>${points}</ul></div><div class="interpret-box scope"><h4>Risk screening</h4><p>JournalCheck does not label a journal predatory or safe from missing fields alone. This page reports the dataset evidence; it is not a live external verification.</p></div></div>
-      <div class="card-footer"><span>Dataset completeness: ${completeness(j)}%</span><span>Result ${n+1} of ${matches.length}</span></div></article>`;
-    }).join("");
-    section.innerHTML=`<div class="container"><div class="result-head"><div><span class="eyebrow">Verified database search</span><h2>${matches.length} result${matches.length===1?'':'s'} for “${escapeHTML(q)}”</h2><div class="result-sub">Ranked by exact identifier, exact title, title relevance and indexed fields.</div></div><button class="secondary" id="print-results" type="button">Print results</button></div>${cards}<p class="disclaimer"><strong>Important:</strong> these results come from the current JournalCheck master dataset. They are not a live verification against Scopus, Clarivate/Web of Science, publishers, or other external services. Confirm critical submission requirements with the relevant official source before submitting.</p></div>`;
-    section.querySelectorAll('.copy').forEach(btn=>btn.addEventListener('click',()=>copyResult(matches[Number(btn.dataset.index)].journal,btn)));
-    $("#print-results",section)?.addEventListener('click',()=>window.print());
-  }
-
-  async function copyResult(j,btn){
-    const text=[display(j.t),`Publisher: ${display(j.p)}`,`ISSN: ${display(j.i)}`,`eISSN: ${display(j.e)}`,`Country: ${display(j.c)}`,`Language: ${display(j.l)}`,`SCIE: ${status(j.scie)}`,`SSCI: ${status(j.ssci)}`,`AHCI: ${status(j.ahci)}`,`ESCI: ${status(j.esci)}`,`JCR 2025: ${status(j.jcr)}`,`Scopus: ${status(j.sco)}`,`Scopus Active: ${status(j.sa)}`,`Source type: ${display(j.st)}`,`Coverage: ${display(j.cov)}`,`JournalCheck master dataset`].join('\n');
-    try{await navigator.clipboard.writeText(text);const old=btn.textContent;btn.textContent='Copied';setTimeout(()=>btn.textContent=old,1200)}catch{alert('Copy failed. Please copy the result manually.')}
-  }
-
-  function showError(msg){const el=$("#search-error");if(el){el.textContent=msg;el.classList.remove('hidden')}}
-  function hideError(){$("#search-error")?.classList.add('hidden')}
-
-  function saveRecent(q){try{const old=JSON.parse(localStorage.getItem(RECENT_KEY)||'[]');const next=[q,...old.filter(x=>x.toLowerCase()!==q.toLowerCase())].slice(0,5);localStorage.setItem(RECENT_KEY,JSON.stringify(next));renderRecent()}catch{}}
-  function renderRecent(){const wrap=$("#recent-searches");if(!wrap)return;try{const items=JSON.parse(localStorage.getItem(RECENT_KEY)||'[]');wrap.innerHTML=items.length?`<span style="font-size:12px;color:#7b8799;padding:6px 2px">Recent:</span>${items.map(q=>`<button type="button" data-query="${escapeHTML(q)}">${escapeHTML(q)}</button>`).join('')}`:'';wrap.querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ $("#journal").value=b.dataset.query;checkJournal(b.dataset.query)}))}catch{wrap.innerHTML=''}}
-
-  async function checkJournal(explicit){
-    const input=$("#journal"),button=$("#check-button"),q=String(explicit??input?.value??'').trim();
-    if(!q){showError('Enter a journal name, ISSN or eISSN.');input?.focus();return}
-    hideError();button.disabled=true;button.textContent='Checking…';
-    try{await loadDatabase();const matches=searchDatabase(q);saveRecent(q);renderResults(matches,q);const url=new URL(location.href);url.searchParams.set('q',q);history.replaceState({},'',url)}
-    catch(err){console.error(err);showError('The database could not be loaded. Please confirm that data/journals.json is present and valid, then refresh the page.')}
-    finally{button.disabled=false;button.textContent='Check Journal'}
-  }
-  window.checkJournal=checkJournal;
-
-  document.addEventListener('DOMContentLoaded',async()=>{
-    const input=$("#journal"),button=$("#check-button");
-    input?.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();checkJournal()}});
-    button?.addEventListener('click',()=>checkJournal());
-    $("#clear-button")?.addEventListener('click',()=>{input.value='';hideError();$("#results").innerHTML='';const url=new URL(location.href);url.searchParams.delete('q');history.replaceState({},'',url);input.focus()});
-    document.querySelectorAll('[data-example]').forEach(b=>b.addEventListener('click',()=>{input.value=b.dataset.example;checkJournal(b.dataset.example)}));
-    renderRecent();
-    try{await loadDatabase()}catch(err){}
-    const q=new URLSearchParams(location.search).get('q');if(q){input.value=q;checkJournal(q)}
-  });
-})();
+}
+function setText(sel,text){const el=$(sel);if(el)el.textContent=text}
+function buildQuickChips(){
+  const picks=state.records.slice(0,3).map(r=>({t:clean(val(r,"title")),i:clean(val(r,"issn"))})).filter(x=>x.t);
+  $("#quickChips").innerHTML=picks.map(x=>`<button class="chip" data-q="${esc(x.i||x.t)}">${esc(x.t)}${x.i?` · ${esc(formatIssn(x.i))}`:""}</button>`).join("");
+}
+function scoreMatch(r,q){
+  const nq=norm(q), ni=normIssn(q);
+  const title=norm(val(r,"title")), issn=normIssn(val(r,"issn")), eissn=normIssn(val(r,"eissn")), pub=norm(val(r,"publisher"));
+  if(ni && (ni===issn || ni===eissn)) return 1000;
+  if(title===nq) return 950;
+  let s=0;
+  if(title.includes(nq)) s+=500;
+  const qTokens=nq.split(/\s+/).filter(Boolean), tTokens=new Set(title.split(/\s+/));
+  const overlap=qTokens.filter(x=>tTokens.has(x)).length;
+  s += overlap * 80;
+  if(pub.includes(nq)) s+=40;
+  const prefix=nq.slice(0,Math.min(12,nq.length));
+  if(prefix && title.startsWith(prefix)) s+=50;
+  return s;
+}
+function searchDB(q){
+  q=clean(q); state.query=q;
+  if(!q) return [];
+  return state.records.map(r=>({r,s:scoreMatch(r,q)})).filter(x=>x.s>0).sort((a,b)=>b.s-a.s).slice(0,8).map(x=>x.r);
+}
+function addRecent(q){
+  const x=clean(q); if(!x)return;
+  state.recent=[x,...state.recent.filter(v=>norm(v)!==norm(x))].slice(0,5);
+  localStorage.setItem("jc_recent",JSON.stringify(state.recent)); renderRecent();
+}
+function renderRecent(){
+  const wrap=$("#recentWrap"), box=$("#recentChips");
+  if(!state.recent.length){wrap.hidden=true;return}
+  wrap.hidden=false; box.innerHTML=state.recent.map(q=>`<button class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("");
+}
+function doSearch(q){
+  if(!state.records.length){showToast("Database is still loading.");return}
+  q=clean(q||$("#journalInput").value);
+  if(!q){showToast("Enter a journal title, ISSN or eISSN.");$("#journalInput").focus();return}
+  $("#journalInput").value=q; addRecent(q); setText("#searchState","Searching");
+  state.results=searchDB(q);
+  renderResults();
+  setText("#searchState",state.results.length ? `${state.results.length} found` : "No match");
+}
+function renderResults(){
+  $("#resultsSection").hidden=false; $("#detailSection").hidden=true;
+  setText("#resultTitle",`${state.results.length} result${state.results.length===1?"":"s"} for “${state.query}”`);
+  if(!state.results.length){$("#resultsList").innerHTML=`<div class="empty">No close journal match was found. Try the exact ISSN/eISSN or a shorter title.</div>`;return}
+  $("#resultsList").innerHTML=state.results.map((r,i)=>{
+    const concern=calcConcern(r);
+    return `<article class="result-card">
+      <div><div class="match-tag">${i===0?"BEST MATCH":"MATCH "+(i+1)}</div>
+      <h3>${esc(val(r,"title")||"Untitled journal")}</h3><div class="publisher">${esc(val(r,"publisher")||"Publisher not available")}</div>
+      <div class="mini-meta"><span>ISSN <b>${esc(formatIssn(val(r,"issn"))||"—")}</b></span><span>eISSN <b>${esc(formatIssn(val(r,"eissn"))||"—")}</b></span></div></div>
+      <div class="score-mini"><div class="score-ring">${concern.score}</div><div class="score-label">concern score</div></div>
+      <button class="primary-btn open-result" data-index="${i}" type="button">View profile →</button>
+    </article>`;
+  }).join("");
+  $$(".open-result").forEach(b=>b.addEventListener("click",()=>selectResult(Number(b.dataset.index))));
+}
+function selectResult(i){
+  state.selected=state.results[i]; renderDetail(state.selected);
+  $("#detailSection").hidden=false; $("#detailSection").scrollIntoView({behavior:"smooth",block:"start"});
+  verifyExternal(state.selected);
+}
+function calcConcern(r, external={}){
+  let score=0, factors=[];
+  const add=(pts,label,why)=>{score+=pts;factors.push({pts,label,why})};
+  const issn=val(r,"issn"), eissn=val(r,"eissn"), title=val(r,"title"), pub=val(r,"publisher");
+  if(!title) add(25,"Journal title missing","Identity data is incomplete.");
+  if(!issn && !eissn) add(20,"No ISSN/eISSN","A persistent journal identifier is unavailable in this record.");
+  if(!pub) add(10,"Publisher missing","Publisher information is not present in the local record.");
+  const indexKeys=["scie","ssci","ahci","esci","jcr","scopus"];
+  const yes=indexKeys.filter(k=>boolValue(val(r,k))===true).length;
+  if(yes===0) add(18,"No major index signal in dataset","None of SCIE, SSCI, AHCI, ESCI, JCR or Scopus is marked positive in this dataset.");
+  else if(yes===1) add(6,"Limited index coverage","Only one major index field is positive in this dataset.");
+  if(boolValue(val(r,"scopus"))===true && boolValue(val(r,"scopusActive"))===false) add(10,"Scopus not active","The dataset distinguishes Scopus presence from current active status.");
+  const doaj=external.doaj;
+  if(doaj?.status==="verified") { /* positive evidence, never subtract as a quality guarantee */ }
+  if(external.crossref?.status==="verified") { /* metadata presence is neutral */ }
+  if(external.openalex?.status==="verified") { /* metadata presence is neutral */ }
+  const normalized=Math.min(100,score);
+  let level=normalized<20?"low":normalized<40?"moderate":normalized<60?"high":"extreme";
+  return {score:normalized,level,factors};
+}
+function concernClass(level){return level}
+function renderDetail(r){
+  const concern=calcConcern(r, state.externalCache.get(formatIssn(val(r,"issn")||val(r,"eissn"))) || {});
+  const index=[
+    ["SCIE","scie"],["SSCI","ssci"],["AHCI","ahci"],["ESCI","esci"],["JCR 2025","jcr"],["Scopus","scopus"],["Scopus Active","scopusActive"]
+  ];
+  $("#detail").innerHTML=`<div class="detail-shell">
+    <div class="detail-hero">
+      <div class="detail-top"><div><div class="match-tag">JOURNAL PROFILE</div>
+        <h2 class="detail-title">${esc(val(r,"title")||"Untitled journal")}</h2>
+        <div class="detail-pub">${esc(val(r,"publisher")||"Publisher not available")}</div></div>
+        <div class="concern ${concernClass(concern.level)}"><b>${concern.level[0].toUpperCase()+concern.level.slice(1)} concern</b><small>${concern.score}/100 screening score</small></div>
+      </div>
+      <div class="identity-grid">
+        ${info("ISSN",formatIssn(val(r,"issn"))||"Not available")}
+        ${info("eISSN",formatIssn(val(r,"eissn"))||"Not available")}
+        ${info("Country",val(r,"country")||"Not available")}
+        ${info("Language",val(r,"language")||"Not available")}
+      </div>
+    </div>
+    <div class="detail-body">
+      <div class="detail-grid">
+        <div><h3 class="panel-title">Indexing profile</h3><div class="index-grid">${index.map(([n,k])=>`<div class="index-item"><div class="index-name">${n}</div>${badge(val(r,k))}</div>`).join("")}</div>
+          <div class="risk-panel"><div class="risk-top"><div><h3 class="panel-title">Concern screening</h3><div style="font-size:12px;color:var(--muted)">Transparent rule-based screening; not a predatory-journal verdict.</div></div><div class="risk-score">${concern.score}<small>/100</small></div></div>
+          <div class="risk-scale"></div><div class="risk-list">${concern.factors.length?concern.factors.map(f=>`<div class="risk-factor"><span>${esc(f.label)}</span><span>+${f.pts}</span></div>`).join(""):`<div class="risk-factor"><span>No material concern flags from the current local fields.</span><span>0</span></div>`}</div>
+          <div class="disclaimer">A low score does not prove a journal is trustworthy, and a high score does not prove misconduct. Confirm critical claims at the relevant official source before submitting.</div></div>
+        </div>
+        <div><h3 class="panel-title">External confirmation</h3><div id="externalChecks" class="external-list">
+          ${externalRow("DOAJ",externalNote("doaj","Checking live ISSN record…"),"doaj")}
+          ${externalRow("OpenAlex",externalNote("openalex","Checking source record…"),"openalex")}
+          ${externalRow("Crossref",externalNote("crossref","Checking journal metadata…"),"crossref")}
+          ${externalRow("ISSN / ROAD","Official source search link","road",false)}
+        </div>
+        <div style="margin-top:14px;font-size:11px;color:var(--muted);line-height:1.55">External services are separate evidence streams. Presence in a discovery/metadata service is not, by itself, a quality endorsement.</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+function info(k,v){return `<div class="info-box"><small>${k}</small><strong>${esc(v)}</strong></div>`}
+function externalNote(key,fallback){
+  const c=state.externalCache.get(formatIssn(val(state.selected,"issn")||val(state.selected,"eissn")));
+  return c?.[key]?.note || fallback;
+}
+function externalRow(name,note,key,checking=true){
+  const r=state.selected, issn=formatIssn(val(r,"issn")||val(r,"eissn"));
+  const cached=state.externalCache.get(issn)?.[key];
+  let href="";
+  if(key==="road") href=`https://road.issn.org/?search=${encodeURIComponent(issn||val(r,"title"))}`;
+  if(key==="doaj") href=`https://doaj.org/search/journals/${encodeURIComponent(issn?`issn:${issn}`:val(r,"title"))}`;
+  const status=cached?.status;
+  const badgeHtml=checking?`<span class="badge ${status==="verified"?"yes":status==="not-found"?"no":"na"} status-badge">${status==="verified"?"✓ Confirmed":status==="not-found"?"× Not found":status==="error"?"! Check manually":"…"}</span>`:"";
+  if(cached?.href) href=cached.href;
+  return `<div class="external-item" data-external="${key}"><div><div class="external-name">${name}</div><div class="external-note">${esc(note)}</div></div><div class="external-actions">${badgeHtml}${href?`<a class="source-btn" href="${href}" target="_blank" rel="noopener">Open source ↗</a>`:""}</div></div>`;
+}
+async function verifyExternal(r){
+  const issn=formatIssn(val(r,"issn")||val(r,"eissn"));
+  if(!issn){ updateExternal("doaj","na","No ISSN/eISSN available");updateExternal("openalex","na","No ISSN/eISSN available");updateExternal("crossref","na","No ISSN/eISSN available");return; }
+  const [doaj,openalex,crossref]=await Promise.allSettled([checkDOAJ(issn),checkOpenAlex(issn),checkCrossref(issn)]);
+  state.externalCache.set(issn,{doaj:resultOf(doaj),openalex:resultOf(openalex),crossref:resultOf(crossref)});
+  updateExternal("doaj",resultOf(doaj).status,resultOf(doaj).note,resultOf(doaj).href);
+  updateExternal("openalex",resultOf(openalex).status,resultOf(openalex).note,resultOf(openalex).href);
+  updateExternal("crossref",resultOf(crossref).status,resultOf(crossref).note,resultOf(crossref).href);
+  renderDetail(r);
+}
+function resultOf(x){return x.status==="fulfilled"?x.value:{status:"error",note:"External check unavailable right now."}}
+async function fetchJSON(url,timeout=6500){
+  const ctl=new AbortController(); const t=setTimeout(()=>ctl.abort(),timeout);
+  try{const res=await fetch(url,{headers:{Accept:"application/json"},signal:ctl.signal});if(!res.ok)throw new Error(String(res.status));return await res.json()}finally{clearTimeout(t)}
+}
+async function checkDOAJ(issn){
+  try{const d=await fetchJSON(`https://doaj.org/api/search/journals/issn:${encodeURIComponent(issn)}`);
+    const ok=Number(d.total)>0; return {status:ok?"verified":"not-found",note:ok?"ISSN found in DOAJ.":"No DOAJ record found for this ISSN.",href:`https://doaj.org/search/journals/issn%3A${encodeURIComponent(issn)}`};
+  }catch(e){return {status:"error",note:"DOAJ could not be reached from this browser.",href:`https://doaj.org/search/journals/issn%3A${encodeURIComponent(issn)}`}}
+}
+async function checkOpenAlex(issn){
+  try{const d=await fetchJSON(`https://api.openalex.org/sources?filter=issn:${encodeURIComponent(issn)}&per-page=1`);
+    const ok=Array.isArray(d.results)&&d.results.length>0; const id=ok?d.results[0].id:"";
+    return {status:ok?"verified":"not-found",note:ok?"ISSN found as an OpenAlex source.":"No OpenAlex source matched this ISSN.",href:id||`https://openalex.org/sources?search=${encodeURIComponent(issn)}`};
+  }catch(e){return {status:"error",note:"OpenAlex could not be reached from this browser.",href:`https://openalex.org/sources?search=${encodeURIComponent(issn)}`}}
+}
+async function checkCrossref(issn){
+  try{const d=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}`);const title=d.message?.title;
+    return {status:title?"verified":"not-found",note:title?`Crossref journal metadata found${title?`: ${title}`:""}.`:"No Crossref journal record found.",href:`https://api.crossref.org/journals/${encodeURIComponent(issn)}`};
+  }catch(e){return {status:"error",note:"Crossref could not be reached from this browser.",href:`https://api.crossref.org/journals/${encodeURIComponent(issn)}`}}
+}
+function updateExternal(key,status,note,href){
+  const row=$(`[data-external="${key}"]`);if(!row)return;
+  const badgeEl=$(".status-badge",row), noteEl=$(".external-note",row), actions=$(".external-actions",row);
+  noteEl.textContent=note;
+  const label=status==="verified"?"✓ Confirmed":status==="not-found"?"× Not found":status==="na"?"— Not available":"! Check manually";
+  badgeEl.className=`badge status-badge ${status==="verified"?"yes":status==="not-found"?"no":"na"}`; badgeEl.textContent=label;
+  if(href && !$(".source-btn",actions)) actions.insertAdjacentHTML("beforeend",`<a class="source-btn" href="${href}" target="_blank" rel="noopener">Open source ↗</a>`);
+}
+function showToast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(showToast.t);showToast.t=setTimeout(()=>t.classList.remove("show"),3000)}
+function initTheme(){
+  const saved=localStorage.getItem("jc_theme"); if(saved)document.documentElement.dataset.theme=saved;
+  $("#themeBtn").addEventListener("click",()=>{const next=document.documentElement.dataset.theme==="dark"?"light":"dark";document.documentElement.dataset.theme=next;localStorage.setItem("jc_theme",next)});
+}
+function init(){
+  initTheme(); renderRecent(); loadDB();
+  $("#searchBtn").addEventListener("click",()=>doSearch());
+  $("#journalInput").addEventListener("keydown",e=>{if(e.key==="Enter")doSearch()});
+  $("#clearBtn").addEventListener("click",()=>{state.query="";state.results=[];state.selected=null;$("#journalInput").value="";$("#resultsSection").hidden=true;$("#detailSection").hidden=true;setText("#searchState","Ready")});
+  document.addEventListener("click",e=>{const q=e.target.closest("[data-q]")?.dataset.q;if(q){$("#journalInput").value=q;doSearch(q)}});
+  $("#compareBtn").addEventListener("click",()=>showToast("Comparison view is reserved for the next multi-journal release."));
+}
+function syncQuery(){
+  const p=new URLSearchParams(location.search), q=p.get("q"); if(q){$("#journalInput").value=q;setTimeout(()=>doSearch(q),300)}
+}
+init(); syncQuery();
