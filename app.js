@@ -32,17 +32,18 @@
     ahci: ["ahci","AHCI"],
     esci: ["esci","ESCI"],
     jcr: ["jcr","jcr_2025","JCR 2025"],
-    scopus: ["scopus","Scopus"],
-    scopusActive: ["scopus_active","scopusActive","scopus_active_status"],
+    scopus: ["scopus","Scopus","sco"],
+    scopusActive: ["scopus_active","scopusActive","scopus_active_status","sa"],
     scopusId: ["scopus_id","source_id","scopus_source_id"],
-    scopusCoverage: ["scopus_coverage","coverage_years","scopus_coverage_years"],
-    scopusType: ["scopus_source_type","source_type"],
-    citescore: ["citescore","cite_score","CiteScore"],
+    scopusCoverage: ["scopus_coverage","coverage_years","scopus_coverage_years","cov"],
+    scopusType: ["scopus_source_type","source_type","st"],
+    scopusOA: ["scopus_oa","oa","scopusOA"],
+    citescore: ["citescore","cite_score","CiteScore","cs","citescore_2025"],
     snip: ["snip","SNIP"],
-    sjr: ["sjr","SJR","scimago_sjr"],
-    quartile: ["quartile","best_quartile","sjr_quartile","scimago_quartile"],
+    sjr: ["sjr","SJR","scimago_sjr","sjr_2024","sjr_2025"],
+    quartile: ["quartile","best_quartile","sjr_quartile","scimago_quartile","q","sjr_q","scimago_q"],
     hindex: ["h_index","hindex","H_index"],
-    subject: ["subject","subject_area","scimago_subject","scopus_subject"],
+    subject: ["subject","subject_area","scimago_subject","scopus_subject","asjc","scopus_asjc"],
     doaj: ["doaj","DOAJ","doaj_indexed"],
     openalex: ["openalex","OpenAlex","openalex_id"],
     crossref: ["crossref","Crossref"],
@@ -121,7 +122,7 @@
       raw:r,title:val(r,"title"),issn:val(r,"issn"),eissn:val(r,"eissn"),publisher:val(r,"publisher"),
       country:val(r,"country"),language:val(r,"language"),scie:val(r,"scie"),ssci:val(r,"ssci"),ahci:val(r,"ahci"),esci:val(r,"esci"),
       jcr:val(r,"jcr"),scopus:val(r,"scopus"),scopusActive:val(r,"scopusActive"),scopusId:val(r,"scopusId"),
-      scopusCoverage:val(r,"scopusCoverage"),scopusType:val(r,"scopusType"),citescore:val(r,"citescore"),snip:val(r,"snip"),
+      scopusCoverage:val(r,"scopusCoverage"),scopusType:val(r,"scopusType"),scopusOA:val(r,"scopusOA"),citescore:val(r,"citescore"),snip:val(r,"snip"),
       sjr:val(r,"sjr"),quartile:val(r,"quartile"),hindex:val(r,"hindex"),subject:val(r,"subject"),
       doaj:val(r,"doaj"),openalex:val(r,"openalex"),crossref:val(r,"crossref"),cope:val(r,"cope"),
       peerReview:val(r,"peerReview"),editorialBoard:val(r,"editorialBoard"),apc:val(r,"apc"),license:val(r,"license"),
@@ -265,11 +266,13 @@
       ["DOAJ",ext.doaj?.found===true?"yes":ext.doaj?.found===false?"no":"unknown",ext.doaj?.record?.title||"Official DOAJ lookup"],
       ["OpenAlex",ext.openalex?.found===true?"yes":ext.openalex?.found===false?"no":"unknown",ext.openalex?.displayName||"Official OpenAlex lookup"],
       ["Crossref",ext.crossref?.found===true?"yes":ext.crossref?.found===false?"no":"unknown",ext.crossref?.title||"Official Crossref lookup"],
-      ["COPE",boolState(j.cope),"Local dataset"]
+      ["COPE",boolState(j.cope),"Local dataset"],
+      ["Scopus source ID",j.scopusId?"yes":"unknown",j.scopusId?j.scopusId:"Not available"],
+      ["Scopus OA",j.scopusOA?"yes":"unknown",j.scopusOA||"Not available"]
     ].map(([k,s,d])=>`<tr><td><strong>${k}</strong></td><td>${s==="yes"?`<span class="status yes">✓ Confirmed</span>`:s==="no"?`<span class="status no">× No</span>`:`<span class="status unknown">— Unknown</span>`}</td><td>${esc(d)}</td></tr>`).join("");
 
     const metricCards=[
-      ["SCImago SJR",j.sjr],["Quartile",j.quartile],["CiteScore",j.citescore],["SNIP",j.snip],["H-index",j.hindex],["Subject area",j.subject]
+      ["SCImago SJR",j.sjr],["SJR year",j.sjr ? "2024" : "Not available"],["Quartile",j.quartile],["CiteScore",j.citescore],["SNIP",j.snip],["H-index",j.hindex],["Subject area",j.subject]
     ].map(([k,v])=>`<div class="metric"><small>${k}</small><strong>${textOrNA(v)}</strong></div>`).join("");
 
     const trans=[
@@ -308,19 +311,19 @@
       <div class="section"><h3>2. Indexing profile</h3><table class="table"><thead><tr><th>Database</th><th>Status</th><th>Additional information</th></tr></thead><tbody>${idx}</tbody></table></div>
 
       <div class="section"><h3>3. Journal quality & metrics</h3><div class="grid">${metricCards}</div>
-        <div class="notice" style="margin-top:14px"><strong>Quartiles are category-specific.</strong> A journal can have different quartiles across subject categories. JournalCheck displays the locally verified metric/year and does not infer a Q1–Q4 value from a general reputation.</div>
+        <div class="notice" style="margin-top:14px"><strong>SCImago is a separate metric source.</strong> SJR and quartiles are only displayed when a verified SJR value is present. JournalCheck never converts a Scopus CiteScore or other metric into an SJR/quartile. Use the official SCImago lookup below when the local SJR field is unavailable.</div>
       </div>
 
-      <div class="section"><h3>4. External confirmations</h3><table class="table"><thead><tr><th>Source</th><th>Result</th><th>Evidence / response</th></tr></thead><tbody>${externalRows}</tbody></table>
+      <div class="section"><h3>4. External confirmations & source records</h3><table class="table"><thead><tr><th>Source</th><th>Result</th><th>Evidence / response</th></tr></thead><tbody>${externalRows}</tbody></table>
         <div class="external" style="margin-top:14px">
           <a target="_blank" rel="noopener" href="https://www.scopus.com/sources">Scopus Sources ↗</a>
-          <a target="_blank" rel="noopener" href="https://www.scimagojr.com/">SCImago ↗</a>
+          <a target="_blank" rel="noopener" href="https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(digits(j.issn||j.eissn))}&tip=issn">SCImago journal lookup ↗</a>
           <a target="_blank" rel="noopener" href="https://doaj.org/">DOAJ ↗</a>
           <a target="_blank" rel="noopener" href="https://openalex.org/">OpenAlex ↗</a>
           <a target="_blank" rel="noopener" href="https://search.crossref.org/">Crossref ↗</a>
           <a target="_blank" rel="noopener" href="${google}">Google investigation ↗</a>
         </div>
-        <div class="notice" style="margin-top:14px"><strong>Important:</strong> external search results are investigation aids, not automatic proof of misconduct. Official source records should control final submission decisions.</div>
+        <div class="notice" style="margin-top:14px"><strong>Important:</strong> external results are verification aids. Scopus source data in this record comes from the uploaded July 2026 Scopus Sources file; SCImago is a separate ranking source and may not list every active Scopus title. Official source records should control final submission decisions.</div>
       </div>
 
       <div class="section"><h3>5. Concern screening</h3><p style="color:var(--muted);margin-top:-6px">The score represents detected warning signals. Missing information is <strong>not</strong> treated as misconduct.</p>${signals}</div>
