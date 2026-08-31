@@ -3,7 +3,7 @@ const state = {
 };
 
 // GitHub Pages project URL
-const DATABASE_URL = "/Journal_checker/data/journals.json";
+const DATABASE_URL = "./data/journals.json";
 
 function normalize(text) {
     return String(text || "")
