@@ -1,116 +1,41 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JournalCheck — Check Journal Indexing Before You Submit</title>
-  <meta name="description" content="JournalCheck helps researchers check journal identity, ISSN/eISSN, Scopus and Web of Science indexing fields, JCR 2025 status, publication information and dataset completeness before submission.">
-  <meta name="robots" content="index,follow">
-  <link rel="canonical" href="https://hilariousalpha-design.github.io/Journal_checker/">
-  <meta property="og:title" content="JournalCheck — Check a journal before you submit">
-  <meta property="og:description" content="Search the JournalCheck master dataset for journal identity, indexing and publication information.">
-  <meta property="og:type" content="website">
-  <meta property="og:url" content="https://hilariousalpha-design.github.io/Journal_checker/">
-  <meta name="theme-color" content="#3157d5">
-  <style>
-    :root{--blue:#3157d5;--blue-dark:#2444ad;--ink:#172033;--muted:#687386;--line:#e1e5ec;--bg:#f6f8fc;--card:#fff;--green:#18794e;--green-bg:#e8f7ee;--red:#b42318;--red-bg:#fdecec;--neutral:#5f6b7a;--neutral-bg:#eef1f5;--shadow:0 18px 50px rgba(30,45,80,.08)}
-    *{box-sizing:border-box;margin:0;padding:0}
-    html{scroll-behavior:smooth}
-    body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;background:var(--bg);color:var(--ink);line-height:1.5}
-    a{color:inherit}.container{width:min(1120px,92%);margin:auto}
-    header{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
-    .nav{min-height:68px;display:flex;align-items:center;justify-content:space-between}.logo{font-size:25px;font-weight:800;letter-spacing:-.5px}.logo span{color:var(--blue)}
-    .nav-links{display:flex;gap:25px}.nav-links a{text-decoration:none;color:#5f6b7a;font-size:14px;font-weight:600}.nav-links a:hover{color:var(--blue)}
-    .hero{padding:82px 0 64px;text-align:center;background:linear-gradient(180deg,#fff 0%,#f7f9fd 100%)}
-    .eyebrow{display:inline-block;color:var(--blue);font-size:12px;font-weight:800;letter-spacing:1.7px;text-transform:uppercase}.hero h1{font-size:clamp(42px,6vw,68px);line-height:1.02;letter-spacing:-2.8px;margin:15px 0 20px}.hero> .container>p{max-width:780px;margin:auto;color:var(--muted);font-size:19px;line-height:1.65}
-    .search-box{max-width:900px;margin:34px auto 0;background:var(--card);padding:25px;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);text-align:left}.search-label{display:block;font-weight:800;margin-bottom:10px}.search-row{display:flex;gap:10px}.search-row input{min-width:0;flex:1;padding:16px 17px;border:1px solid #cbd2df;border-radius:11px;font-size:16px;outline:none}.search-row input:focus{border-color:var(--blue);box-shadow:0 0 0 3px rgba(49,87,213,.12)}button{font:inherit}.primary-btn,.secondary-btn,.icon-button{border:0;border-radius:11px;font-weight:800;cursor:pointer}.primary-btn{padding:15px 25px;background:var(--blue);color:#fff;min-width:150px}.primary-btn:hover{background:var(--blue-dark)}.primary-btn:disabled{opacity:.65;cursor:wait}.secondary-btn,.icon-button{background:#fff;color:var(--blue);border:1px solid #cfd6e3;padding:11px 15px}.secondary-btn:hover,.icon-button:hover{background:#f5f7ff}.search-actions{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:11px}.note{color:#7a8494;font-size:13px}.loading{color:var(--blue);font-size:13px;font-weight:700}.is-hidden{display:none!important}.error-text{color:var(--red);font-size:13px;font-weight:700;margin-top:10px}
-    .examples{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.example-btn,.recent-btn{border:1px solid var(--line);background:#f8f9fc;color:#516074;padding:7px 10px;border-radius:999px;font-size:12px;cursor:pointer}.example-btn:hover,.recent-btn:hover{border-color:#b8c4df;color:var(--blue)}
-    .recent{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:10px;color:#7a8494;font-size:12px}
-    .status-strip{background:#fff;border-bottom:1px solid var(--line)}.status-inner{min-height:58px;display:flex;align-items:center;justify-content:center;gap:24px;flex-wrap:wrap;color:#697487;font-size:13px}.status-item{display:flex;align-items:center;gap:7px}.status-dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#9aa3b1}.status-dot.ready{background:#1b9a63}.status-dot.error{background:#d92d20}
-    .results-section{padding:48px 0 25px}.result-heading{max-width:940px;margin:0 auto 18px;display:flex;justify-content:space-between;align-items:end;gap:15px}.result-heading h2{font-size:31px;letter-spacing:-.6px;margin-top:6px}.journal-card{max-width:940px;margin:18px auto;background:#fff;border:1px solid var(--line);border-radius:18px;padding:28px;box-shadow:0 10px 35px rgba(30,45,80,.06)}.card-top{display:flex;justify-content:space-between;gap:15px}.match-label{color:var(--blue);font-size:11px;font-weight:900;letter-spacing:1.3px}.journal-card h2{font-size:25px;line-height:1.2;margin:5px 0}.publisher{color:var(--muted);font-size:14px}.info-grid,.details-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0}.info-cell{background:#f7f8fb;border-radius:10px;padding:13px}.info-cell span{display:block;color:#697487;font-size:11px;font-weight:700;margin-bottom:4px}.info-cell strong{display:block;font-size:14px;word-break:break-word}.journal-card h3{font-size:16px;margin:23px 0 11px}.index-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.index-card{border:1px solid #e7eaf0;border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}.index-card>span{font-size:11px;font-weight:800;color:#697487}.badge{display:inline-block;width:max-content;padding:5px 8px;border-radius:999px;font-size:12px;font-weight:800}.badge.yes{background:var(--green-bg);color:var(--green)}.badge.no{background:var(--red-bg);color:var(--red)}.badge.neutral{background:var(--neutral-bg);color:var(--neutral)}
-    .interpretation{margin-top:22px;padding:17px;border:1px solid #e7eaf0;border-radius:12px;background:#fbfcfe;display:grid;grid-template-columns:1.2fr 1fr;gap:20px}.section-label{font-size:12px;font-weight:900;color:#4f5c70;text-transform:uppercase;letter-spacing:.8px}.interpretation ul{padding-left:18px;margin-top:8px;color:#556174;font-size:13px}.scope-note{border-left:1px solid var(--line);padding-left:20px}.scope-note strong{font-size:13px}.scope-note p{color:#697487;font-size:13px;margin-top:5px}.card-footer{border-top:1px solid #edf0f4;margin-top:20px;padding-top:13px;display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;color:#7a8494;font-size:12px}.dataset-disclaimer{max-width:940px;margin:18px auto;color:#687386;background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px;font-size:12px;line-height:1.6}.empty-card{max-width:940px;margin:auto;background:#fff;border:1px solid var(--line);border-radius:18px;padding:45px;text-align:center;box-shadow:var(--shadow)}.empty-card h2{font-size:30px;margin:8px 0}.empty-card p{color:var(--muted)}.tips{margin-top:18px;background:#f7f8fb;border-radius:10px;padding:13px;color:#657186;font-size:13px}
-    .features{padding:70px 0}.section-title{text-align:center;font-size:37px;letter-spacing:-1px;margin-bottom:36px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:16px}.feature-card{background:#fff;border:1px solid var(--line);border-radius:15px;padding:23px}.feature-card h3{margin-bottom:9px;font-size:16px}.feature-card p{color:#697487;font-size:13px;line-height:1.65}.methodology{background:#fff;border-top:1px solid var(--line);padding:70px 0}.methodology-content{max-width:850px;margin:auto;text-align:center}.methodology h2{font-size:37px;letter-spacing:-1px;margin:7px 0 14px}.methodology p{color:#687386;line-height:1.75}.method-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px;text-align:left}.method-card{background:#f7f8fb;border:1px solid var(--line);border-radius:13px;padding:18px}.method-card strong{display:block;margin-bottom:5px}.method-card span{font-size:13px;color:#697487}.footer{padding:30px;text-align:center;color:#7a8494;font-size:12px}.footer a{color:var(--blue);text-decoration:none}
-    @media(max-width:850px){.cards{grid-template-columns:1fr 1fr}.index-grid{grid-template-columns:repeat(2,1fr)}.info-grid,.details-grid{grid-template-columns:repeat(2,1fr)}.interpretation{grid-template-columns:1fr}.scope-note{border-left:0;border-top:1px solid var(--line);padding-left:0;padding-top:15px}.search-row{flex-direction:column}.primary-btn{width:100%}.nav-links{display:none}}
-    @media(max-width:560px){.hero{padding:58px 0 45px}.hero h1{letter-spacing:-1.7px}.hero> .container>p{font-size:16px}.search-box{padding:18px}.cards,.index-grid,.info-grid,.details-grid,.method-grid{grid-template-columns:1fr}.result-heading{align-items:start;flex-direction:column}.journal-card{padding:20px}.journal-card h2{font-size:22px}.status-inner{padding:10px 0;justify-content:flex-start}.card-top{align-items:start}}
-    @media print{header,.hero,.status-strip,.features,.methodology,.footer,.result-heading .secondary-btn{display:none!important}.results-section{padding:0}.journal-card{box-shadow:none;break-inside:avoid}.dataset-disclaimer{font-size:10px}.copy-btn{display:none}}
-  </style>
-  <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"WebApplication","name":"JournalCheck","url":"https://hilariousalpha-design.github.io/Journal_checker/","applicationCategory":"ResearchApplication","description":"A researcher-focused journal information and indexing screening tool based on the JournalCheck master dataset."}
-  </script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JournalCheck — Check Journal Indexing Before You Submit</title>
+<meta name="description" content="Search JournalCheck for journal identity, ISSN/eISSN, Web of Science fields, JCR 2025, Scopus information and publication data.">
+<meta name="robots" content="index,follow">
+<link rel="canonical" href="https://hilariousalpha-design.github.io/Journal_checker/">
+<meta property="og:title" content="JournalCheck — Check a journal before you submit">
+<meta property="og:description" content="Evidence-first journal lookup for researchers.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://hilariousalpha-design.github.io/Journal_checker/">
+<meta name="theme-color" content="#3157d5">
+<style>
+:root{--blue:#3157d5;--blue2:#2446b8;--ink:#142038;--muted:#637089;--line:#dfe5ee;--bg:#f5f7fb;--card:#fff;--green:#137a4b;--greenbg:#e8f7ef;--red:#b42318;--redbg:#fdeceb;--neutral:#687386;--neutralbg:#eef2f7;--shadow:0 20px 60px rgba(24,39,75,.09)}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Arial,sans-serif;color:var(--ink);background:var(--bg);line-height:1.55}button,input{font:inherit}button{cursor:pointer}a{color:inherit}.container{width:min(1120px,92%);margin:auto}
+header{position:sticky;top:0;z-index:20;background:rgba(255,255,255,.96);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}.nav{height:68px;display:flex;align-items:center;justify-content:space-between}.logo{font-size:25px;font-weight:850;letter-spacing:-.7px}.logo span{color:var(--blue)}.navlinks{display:flex;gap:30px;color:#516078;font-size:15px}.navlinks a{text-decoration:none}.navlinks a:hover{color:var(--blue)}
+.hero{padding:76px 0 52px;background:linear-gradient(180deg,#fff 0%,#f7f9fd 100%)}.hero-inner{text-align:center}.eyebrow{display:inline-block;color:var(--blue);font-weight:800;font-size:11px;letter-spacing:2px;text-transform:uppercase}.hero h1{font-size:clamp(42px,6vw,72px);line-height:1.02;letter-spacing:-3px;max-width:760px;margin:18px auto 22px}.hero p{max-width:760px;margin:0 auto 30px;color:#5f6d83;font-size:17px}
+.search-card{max-width:1000px;margin:auto;background:var(--card);border:1px solid var(--line);border-radius:20px;padding:26px;box-shadow:var(--shadow);text-align:left}.search-card label{display:block;font-size:15px;font-weight:800;margin-bottom:9px}.search-row{display:flex;gap:12px}.search-row input{min-width:0;flex:1;height:54px;border:1px solid #cbd4e2;border-radius:12px;padding:0 16px;outline:none;color:var(--ink);background:#fff}.search-row input:focus{border-color:var(--blue);box-shadow:0 0 0 4px rgba(49,87,213,.12)}.primary{height:54px;padding:0 25px;border:0;border-radius:12px;background:var(--blue);color:#fff;font-weight:800}.primary:hover{background:var(--blue2)}.primary:disabled{opacity:.65;cursor:wait}.search-meta{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-top:10px;color:#708099;font-size:13px}.secondary{border:1px solid #ccd5e4;background:#fff;color:#29437e;border-radius:9px;padding:7px 12px;font-weight:700}.examples,.recent{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}.example,.recent button{border:1px solid #dbe2ed;background:#f8faff;color:#4e6180;border-radius:999px;padding:6px 10px;font-size:12px}.example:hover,.recent button:hover{border-color:#b7c5df;color:var(--blue)}.error{margin-top:12px;padding:10px 12px;border-radius:10px;background:var(--redbg);color:var(--red);font-size:13px}.hidden{display:none!important}.loading{margin-top:13px;color:#5f6d83;font-size:13px}
+.status{background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}.status-inner{min-height:48px;display:flex;justify-content:center;align-items:center;gap:28px;color:#718097;font-size:12px}.status-item{display:flex;align-items:center;gap:6px}.dot{width:7px;height:7px;border-radius:50%;background:#f0b429}.dot.ready{background:#1f9d61}.dot.error{background:#d92d20}
+.results{padding:40px 0 10px}.result-head{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:18px}.result-head h2{font-size:25px;line-height:1.2;margin:5px 0 0;letter-spacing:-.6px}.result-sub{font-size:13px;color:#6d7b91}.journal-card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:25px;margin-bottom:18px;box-shadow:0 10px 35px rgba(24,39,75,.055)}.card-top{display:flex;justify-content:space-between;gap:16px}.match{font-size:10px;letter-spacing:1.5px;color:var(--blue);font-weight:850}.journal-card h3{font-size:15px;margin:22px 0 10px}.journal-title{font-size:25px;line-height:1.2;margin:5px 0 3px;letter-spacing:-.6px}.publisher{color:#68758a;margin:0;font-size:14px}.copy{height:36px;border:1px solid #ccd5e4;background:#fff;border-radius:9px;padding:0 12px;color:#34508d;font-weight:750}.copy:hover{border-color:#9fb1d2}.info-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:18px}.info,.index-card{background:#f7f9fc;border:1px solid #e5e9f0;border-radius:11px;padding:10px 12px}.info span,.index-card>span{display:block;color:#738198;font-size:10px;text-transform:uppercase;letter-spacing:.7px;font-weight:750}.info strong{display:block;font-size:13px;margin-top:3px;overflow-wrap:anywhere}.index-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.index-card{background:#fff}.badge{display:inline-flex;margin-top:6px;border-radius:999px;padding:3px 8px;font-size:11px;font-weight:800}.badge.yes{background:var(--greenbg);color:var(--green)}.badge.no{background:var(--redbg);color:var(--red)}.badge.neutral{background:var(--neutralbg);color:var(--neutral)}.details{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.interpret{display:grid;grid-template-columns:1.2fr 1fr;gap:12px;margin-top:20px}.interpret-box{border:1px solid #e3e8f0;border-radius:12px;padding:14px;background:#fbfcfe}.interpret-box h4{margin:0 0 7px;font-size:13px}.interpret-box ul{margin:0;padding-left:18px;color:#59677d;font-size:13px}.scope p{margin:0;color:#647187;font-size:12px}.card-footer{display:flex;justify-content:space-between;gap:12px;border-top:1px solid #edf0f5;margin-top:20px;padding-top:12px;color:#8390a2;font-size:11px}.disclaimer{font-size:12px;color:#6a778b;max-width:980px;margin:18px auto 0;text-align:center}.empty{background:#fff;border:1px solid var(--line);border-radius:18px;padding:28px;text-align:center}.empty h2{margin:6px 0;font-size:23px}.empty p{color:#6a778b}
+.features{padding:65px 0 70px}.section-title{text-align:center;font-size:32px;letter-spacing:-1px;margin:0 0 28px}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.feature{background:#fff;border:1px solid var(--line);border-radius:15px;padding:20px}.feature h3{font-size:15px;margin:0 0 8px}.feature p{font-size:12px;color:#66748a;margin:0}.method{background:#fff;border-top:1px solid var(--line);padding:70px 0}.method-inner{text-align:center;max-width:850px}.method h2{font-size:34px;letter-spacing:-1px;margin:9px 0 10px}.method p{color:#66748a;font-size:14px}.method-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;text-align:left;margin-top:25px}.method-card{background:#f7f9fc;border:1px solid #e2e7ef;border-radius:12px;padding:17px}.method-card strong,.method-card span{display:block}.method-card strong{font-size:13px}.method-card span{color:#6b7890;font-size:12px;margin-top:5px}.footer{background:#fff;border-top:1px solid var(--line);padding:25px;text-align:center;color:#7a8799;font-size:12px}.footer a{color:var(--blue);text-decoration:none}
+@media(max-width:800px){.navlinks{gap:15px}.hero{padding-top:55px}.search-row{flex-direction:column}.primary{width:100%}.search-meta{align-items:flex-start;flex-direction:column}.info-grid,.index-grid,.details{grid-template-columns:repeat(2,1fr)}.interpret,.cards,.method-grid{grid-template-columns:1fr}.result-head{align-items:flex-start;flex-direction:column}.journal-title{font-size:22px}}
+@media(max-width:480px){.container{width:min(94%,1120px)}.nav{height:60px}.navlinks{font-size:13px;gap:12px}.logo{font-size:22px}.hero h1{letter-spacing:-2px}.search-card{padding:18px}.info-grid,.index-grid,.details{grid-template-columns:1fr}.card-top{flex-direction:column}.copy{align-self:flex-start}.card-footer{flex-direction:column}}
+@media print{header,.hero,.status,.features,.method,.footer,.result-head .secondary,.copy{display:none!important}.results{padding:0}.journal-card{box-shadow:none;break-inside:avoid}.disclaimer{color:#222}}
+</style>
 </head>
 <body>
-  <header>
-    <div class="container nav">
-      <div class="logo">Journal<span>Check</span></div>
-      <nav class="nav-links" aria-label="Primary navigation">
-        <a href="#features">Features</a>
-        <a href="#methodology">Methodology</a>
-      </nav>
-    </div>
-  </header>
-
-  <section class="hero">
-    <div class="container">
-      <span class="eyebrow">Researcher-first journal verification</span>
-      <h1>Check a journal<br>before you submit.</h1>
-      <p>Search journal identity, ISSN/eISSN, indexing fields and publication information from the current JournalCheck master dataset—without treating missing information as proof of misconduct.</p>
-
-      <div class="search-box">
-        <label class="search-label" for="journal">Journal name, ISSN or eISSN</label>
-        <div class="search-row">
-          <input id="journal" type="search" autocomplete="off" spellcheck="false" placeholder="Example: Research in Hospitality Management or 2224-3534" aria-describedby="search-help search-error">
-          <button id="check-button" class="primary-btn" type="button">Check Journal</button>
-        </div>
-        <div class="search-actions">
-          <span id="search-help" class="note">Searches the current JournalCheck master database.</span>
-          <button id="clear-button" class="secondary-btn" type="button">Clear</button>
-        </div>
-        <div id="search-error" class="error-text is-hidden" role="alert"></div>
-        <div class="examples" aria-label="Example searches">
-          <button class="example-btn" type="button" data-example="Research in Hospitality Management">Research in Hospitality Management</button>
-          <button class="example-btn" type="button" data-example="Anatolia">Anatolia</button>
-          <button class="example-btn" type="button" data-example="2224-3534">2224-3534</button>
-        </div>
-        <div id="recent-searches" class="recent"></div>
-        <div id="loading-status" class="loading is-hidden" aria-live="polite"></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="status-strip" aria-label="Database status">
-    <div class="container status-inner">
-      <div class="status-item"><span id="database-status" class="status-dot"></span><span>Database: <strong id="database-status-label">Ready</strong></span></div>
-      <div class="status-item">Records: <strong id="database-count">—</strong></div>
-      <div class="status-item">Dataset version: <strong id="database-version">—</strong></div>
-    </div>
-  </section>
-
-  <section class="features" id="features">
-    <div class="container">
-      <h2 class="section-title">What JournalCheck checks</h2>
-      <div class="cards">
-        <div class="feature-card"><h3>🔎 Journal identity</h3><p>Title, ISSN, eISSN, publisher, country and language from the master dataset.</p></div>
-        <div class="feature-card"><h3>📚 Indexing profile</h3><p>SCIE, SSCI, AHCI, ESCI, JCR 2025, Scopus and Scopus Active fields where available.</p></div>
-        <div class="feature-card"><h3>📋 Publication data</h3><p>Scopus source type, open-access field and coverage information are shown without inventing missing values.</p></div>
-        <div class="feature-card"><h3>⚠️ Transparent screening</h3><p>JournalCheck does not call a journal predatory merely because information is missing from this dataset.</p></div>
-      </div>
-    </div>
-  </section>
-
-  <section class="methodology" id="methodology">
-    <div class="container methodology-content">
-      <span class="eyebrow">Methodology</span>
-      <h2>Evidence first. Interpretation second.</h2>
-      <p>JournalCheck is a screening tool built around the current master dataset. It distinguishes positive fields, negative fields and unavailable information. It does not claim live verification against external indexing services.</p>
-      <div class="method-grid">
-        <div class="method-card"><strong>1. Identify</strong><span>Search by title, ISSN or eISSN.</span></div>
-        <div class="method-card"><strong>2. Compare</strong><span>Review the indexing and publication fields returned by the dataset.</span></div>
-        <div class="method-card"><strong>3. Confirm</strong><span>For a submission decision, confirm critical requirements with the relevant official source.</span></div>
-      </div>
-    </div>
-  </section>
-
-  <footer class="footer">© 2026 JournalCheck · Built for researchers · <a href="#methodology">Methodology</a></footer>
-  <script src="./app.js"></script>
-</body>
-</html>
+<header><div class="container nav"><a class="logo" href="./">Journal<span>Check</span></a><nav class="navlinks"><a href="#features">Features</a><a href="#methodology">Methodology</a></nav></div></header>
+<main>
+<section class="hero"><div class="container hero-inner"><span class="eyebrow">Researcher-first journal verification</span><h1>Check a journal<br>before you submit.</h1><p>Search journal identity, ISSN/eISSN, indexing fields and publication information from the current JournalCheck master dataset—without treating missing information as proof of misconduct.</p>
+<div class="search-card"><label for="journal">Journal name, ISSN or eISSN</label><div class="search-row"><input id="journal" type="search" autocomplete="off" spellcheck="false" placeholder="Example: Journal of Tourism Research or 1234-5678" aria-describedby="search-help"><button id="check-button" class="primary" type="button">Check Journal</button></div><div class="search-meta"><span id="search-help">Searches the current JournalCheck master database.</span><button id="clear-button" class="secondary" type="button">Clear</button></div><div id="search-error" class="error hidden" role="alert"></div><div class="examples" aria-label="Example searches"><button class="example" data-example="Research in Hospitality Management" type="button">Research in Hospitality Management</button><button class="example" data-example="Anatolia" type="button">Anatolia</button><button class="example" data-example="2224-3534" type="button">2224-3534</button></div><div id="recent-searches" class="recent" aria-label="Recent searches"></div><div id="loading-status" class="loading hidden" aria-live="polite"></div></div></div></section>
+<section class="status" aria-label="Database status"><div class="container status-inner"><div class="status-item"><span id="database-status" class="dot"></span>Database: <strong id="database-status-label">Loading</strong></div><div class="status-item">Records: <strong id="database-count">—</strong></div><div class="status-item">Dataset version: <strong id="database-version">—</strong></div></div></section>
+<section id="results" class="results" aria-live="polite"></section>
+<section id="features" class="features"><div class="container"><h2 class="section-title">What JournalCheck checks</h2><div class="cards"><div class="feature"><h3>🔎 Journal identity</h3><p>Title, ISSN, eISSN, publisher, country and language from the master dataset.</p></div><div class="feature"><h3>📚 Indexing profile</h3><p>SCIE, SSCI, AHCI, ESCI, JCR 2025, Scopus and Scopus Active fields.</p></div><div class="feature"><h3>📋 Publication data</h3><p>Source type, open-access field, coverage and subject categories where available.</p></div><div class="feature"><h3>⚠️ Transparent screening</h3><p>Missing information is shown as unavailable; it is never treated as proof of misconduct.</p></div></div></div></section>
+<section id="methodology" class="method"><div class="container method-inner"><span class="eyebrow">Methodology</span><h2>Evidence first. Interpretation second.</h2><p>JournalCheck is a screening tool built around the current master dataset. It separates positive, negative and unavailable fields and does not claim live verification against external indexing services.</p><div class="method-grid"><div class="method-card"><strong>1. Identify</strong><span>Search by title, ISSN or eISSN.</span></div><div class="method-card"><strong>2. Compare</strong><span>Review the indexing and publication fields returned by the dataset.</span></div><div class="method-card"><strong>3. Confirm</strong><span>For a submission decision, confirm critical requirements with the relevant official source.</span></div></div></div></section>
+</main>
+<footer class="footer">© 2026 JournalCheck · Built for researchers · <a href="#methodology">Methodology</a></footer>
+<script src="./app.js"></script>
+</body></html>
