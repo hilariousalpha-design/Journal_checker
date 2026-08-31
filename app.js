@@ -184,65 +184,74 @@
   }
 
   async function externalChecks(j) {
-    const out={openalex:null,crossref:null,doaj:null,retractions:null};
-    const issns=[digits(j.issn),digits(j.eissn)].filter(Boolean);
-    const issn=issns[0];
+    const out={openalex:null,crossref:null,doaj:null,retractions:null,identityConflict:false};
+    const rawIssns=[j.issn,j.eissn].filter(Boolean).map(norm);
+    const normalizedIssns=rawIssns.map(x=>digits(x)).filter(Boolean);
+    const issn=rawIssns[0];
     if (!issn) return out;
 
-    // OpenAlex: source identity, OA, DOAJ flag, APC, works/citations and summary metrics.
-    try {
-      const data=await fetchJSON(`https://api.openalex.org/sources/issn:${encodeURIComponent(issn)}`,9000);
-      const source=Array.isArray(data.results)?data.results[0]:data;
-      if (source && source.id) {
-        const ids=[source.issn_l,...(source.issn||[])].filter(Boolean).map(digits);
-        out.openalex={
-          found:true,id:source.id,displayName:source.display_name||"",
-          issns:ids,works:source.works_count??null,citations:source.cited_by_count??null,
-          homepage:source.homepage_url||"",country:source.country_code||"",
-          publisher:source.host_organization_name||"",
-          isOA:source.is_oa===true,isInDOAJ:source.is_in_doaj===true,
-          apcUsd:source.apc_usd??null,hIndex:source.summary_stats?.h_index??null,
-          twoYearCitedness:source.summary_stats?.["2yr_mean_citedness"]??null,
-          type:source.type||"", issnMismatch:!ids.some(x=>issns.includes(x))
-        };
-      } else out.openalex={found:false};
-    } catch(e){out.openalex={found:null,error:e.message};}
-
-    // Crossref: journal identity and DOI registration metadata.
-    try {
-      const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}`,9000);
-      const m=data.message||{};
-      const titles=(m.title||[]).join(" ");
-      const crossIssns=(m.ISSN||[]).map(digits);
-      out.crossref={
-        found:!!m.title,title:titles,issn:m.ISSN||[],publisher:m.publisher||"",
-        works:m.counts?.["total-dois"] ?? m.count ?? null,
-        titleMismatch:!!titles && !!j.title && similarity(cleanTitle(titles),cleanTitle(j.title))<0.55,
-        issnMismatch:crossIssns.length>0 && !issns.some(x=>crossIssns.includes(x))
-      };
-    } catch(e){out.crossref={found:null,error:e.message};}
-
-    // DOAJ: public lookup. Some browsers/hosting environments may block the API with CORS;
-    // in that case we keep the state Unknown and provide the official DOAJ record link.
-    try {
-      const data=await fetchJSON(`https://doaj.org/api/search/journals/issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,9000);
-      const total=Number(data.total||0);
-      const bib=data.results?.[0]?.bibjson||null;
-      out.doaj={found:total>0,total,record:bib};
-    } catch(e){
-      try {
-        const data=await fetchJSON(`https://doaj.org/api/search/journal.issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,9000);
-        const total=Number(data.total||0);
-        out.doaj={found:total>0,total,record:data.results?.[0]?.bibjson||null};
-      } catch(e2){ out.doaj={found:null,error:e2.message||e.message}; }
-    }
-
-    // Retraction Watch data is exposed through Crossref's production API. We use it only as a review signal.
-    try {
-      const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}/works?filter=update-type:retraction&rows=0`,9000);
-      const total=Number(data.message?.total-results ?? data.message?.total_results ?? 0);
-      out.retractions={count:total,source:"Crossref / Retraction Watch"};
-    } catch(e){out.retractions={count:null,error:e.message};}
+    // Run independent sources in parallel so one slow/blocked service cannot keep the
+    // entire search screen stuck on "Searching…".
+    const jobs = [
+      (async()=>{
+        try {
+          // OpenAlex resolves ISSNs directly. Keep the canonical ISSN formatting first;
+          // fall back to the compact form only if necessary.
+          const candidates=[issn, ...rawIssns.slice(1)].filter(Boolean);
+          let source=null, lastErr=null;
+          for(const candidate of candidates){
+            try {
+              const data=await fetchJSON(`https://api.openalex.org/sources/issn:${encodeURIComponent(candidate)}`,6000);
+              source=Array.isArray(data.results)?data.results[0]:data;
+              if(source?.id) break;
+            } catch(e){ lastErr=e; }
+          }
+          if(source?.id){
+            const ids=[source.issn_l,...(source.issn||[])].filter(Boolean).map(digits);
+            out.openalex={
+              found:true,id:source.id,displayName:source.display_name||"",
+              issns:ids,works:source.works_count??null,citations:source.cited_by_count??null,
+              homepage:source.homepage_url||"",country:source.country_code||"",
+              publisher:source.host_organization_name||"",
+              isOA:source.is_oa===true,isInDOAJ:source.is_in_doaj===true,
+              apcUsd:source.apc_usd??null,hIndex:source.summary_stats?.h_index??null,
+              twoYearCitedness:source.summary_stats?.["2yr_mean_citedness"]??null,
+              type:source.type||"",issnMismatch:!ids.some(x=>normalizedIssns.includes(x))
+            };
+          } else out.openalex={found:false,error:lastErr?.message||"OpenAlex source not found"};
+        } catch(e){out.openalex={found:null,error:e.message};}
+      })(),
+      (async()=>{
+        try {
+          const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}`,6000);
+          const m=data.message||{}; const titles=(m.title||[]).join(" ");
+          const crossIssns=(m.ISSN||[]).map(digits);
+          out.crossref={found:!!m.title,title:titles,issn:m.ISSN||[],publisher:m.publisher||"",
+            works:m.counts?.["total-dois"] ?? m.count ?? null,
+            titleMismatch:!!titles && !!j.title && similarity(cleanTitle(titles),cleanTitle(j.title))<0.55,
+            issnMismatch:crossIssns.length>0 && !normalizedIssns.some(x=>crossIssns.includes(x))};
+        } catch(e){out.crossref={found:null,error:e.message};}
+      })(),
+      (async()=>{
+        try {
+          const data=await fetchJSON(`https://doaj.org/api/search/journals/issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,6000);
+          const total=Number(data.total||0); out.doaj={found:total>0,total,record:data.results?.[0]?.bibjson||null};
+        } catch(e){
+          try {
+            const data=await fetchJSON(`https://doaj.org/api/search/journal.issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,6000);
+            const total=Number(data.total||0); out.doaj={found:total>0,total,record:data.results?.[0]?.bibjson||null};
+          } catch(e2){out.doaj={found:null,error:e2.message||e.message};}
+        }
+      })(),
+      (async()=>{
+        try {
+          const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}/works?filter=update-type:retraction&rows=0`,6000);
+          const total=Number(data.message?.total-results ?? data.message?.total_results ?? 0);
+          out.retractions={count:total,source:"Crossref / Retraction Watch"};
+        } catch(e){out.retractions={count:null,error:e.message};}
+      })()
+    ];
+    await Promise.allSettled(jobs);
 
     out.identityConflict=Boolean(
       out.crossref?.found===true && out.crossref?.issnMismatch ||
@@ -336,7 +345,8 @@
     const scopusUrl=`https://www.scopus.com/sources`;
     const tcsUrl=`https://thinkchecksubmit.org/journals/`;
 
-    $("googleBtn").href=googlePred;
+    const googleBtn=$("googleBtn");
+    if(googleBtn) googleBtn.href=googlePred;
     $("resultsBox").innerHTML=`
       <div class="journal-top">
         <div>
@@ -403,12 +413,12 @@
         <div class="notice"><strong>JournalCheck is a due-diligence aid, not a predatory-journal verdict.</strong><br>A low concern score does not certify a journal, and a high score does not by itself prove misconduct. Use the official records and the journal's own current policies before submitting.</div>
       </div>
     `;
-    $("resultHead").classList.remove("hide");
-    $("resultsBox").classList.remove("hide");
-    $("emptyBox").classList.add("hide");
-    $("resultTitle").textContent=`${matches.length} result${matches.length===1?"":"s"} for “${query}”`;
-    $("matchSummary").textContent=`Best match selected using title/ISSN/eISSN matching. ${matches.length>1?`${matches.length} close records were found; the strongest match is shown.`:""}`;
-    $("searchStatus").textContent="Complete";
+    if($("resultHead")) $("resultHead").classList.remove("hide");
+    if($("resultsBox")) $("resultsBox").classList.remove("hide");
+    if($("emptyBox")) $("emptyBox").classList.add("hide");
+    if($("resultTitle")) $("resultTitle").textContent=`${matches.length} result${matches.length===1?"":"s"} for “${query}”`;
+    if($("matchSummary")) $("matchSummary").textContent=`Best match selected using title/ISSN/eISSN matching. ${matches.length>1?`${matches.length} close records were found; the strongest match is shown.`:""}`;
+    if($("searchStatus")) $("searchStatus").textContent="Complete";
   }
 
   async function runSearch(query, autoScroll=true) {
@@ -426,8 +436,15 @@
       return;
     }
     current=record(matches[0]);
-    const ext=await externalChecks(current);
-    render(current,ext,matches,q);
+    try {
+      const ext=await externalChecks(current);
+      render(current,ext,matches,q);
+    } catch(err) {
+      console.error("JournalCheck render error:", err);
+      if($("searchStatus")) $("searchStatus").textContent="Complete";
+      if($("resultHead")) $("resultHead").classList.remove("hide");
+      if($("resultsBox")) { $("resultsBox").classList.remove("hide"); $("resultsBox").innerHTML=`<div class="error"><strong>${esc(current.title||"Journal")} was found.</strong><br>The external enrichment layer encountered an error, but the local journal record is available. Please refresh and retry the external checks.</div>`; }
+    }
     const url=new URL(location.href);url.searchParams.set("q",q);history.replaceState({}, "", url);
     saveRecent(q);
     if(autoScroll) setTimeout(()=>$("#results").scrollIntoView({behavior:"smooth",block:"start"}),60);
