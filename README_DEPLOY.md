@@ -1,34 +1,35 @@
-# JournalCheck V3.1 — corrected end product
+# JournalCheck V3.2 — live evidence enrichment build
 
-## What was fixed
-- Uses the 50,608-record JournalCheck master dataset.
-- Merges the uploaded **Scopus Sources July 2026** workbook by ISSN/eISSN.
-- Supports both long field names and the compact legacy keys used by the earlier database (`sco`, `sa`, `st`, `oa`, `cov`).
-- Scopus status, active status, source type, OA status, coverage and Scopus source ID are displayed.
-- Search automatically scrolls to the result.
-- Removes the old Methodology section from the public interface.
-- Adds an ISSN-specific official SCImago lookup link.
-- SJR is displayed only when a verified SJR value exists; it is never inferred from CiteScore or another metric.
-- Keeps Unknown/Not available separate from explicit No.
+## What is fixed
+- Keeps the 50,608-record master database and July 2026 Scopus enrichment.
+- Correctly reads compact Scopus fields: `sco`, `sa`, `st`, `oa`, `cov`, `scopus_id`.
+- Adds live OpenAlex source lookup by ISSN.
+- Adds live Crossref journal lookup by ISSN.
+- Attempts live DOAJ journal lookup; if browser CORS blocks it, status remains **Unknown** and the official DOAJ record link is shown.
+- Adds Crossref / Retraction Watch retraction-related update check.
+- Adds ISSN Portal, official journal, DOAJ, OpenAlex, Crossref, Scopus, SCImago and Think.Check.Submit links.
+- Adds targeted Google investigation links for indexing claims, predatory/hijacked warnings, retractions/expressions of concern, and general discovery.
+- **Risk score no longer penalizes a journal simply for not being in SCIE/SSCI/AHCI/JCR or for missing metadata.** Absence is information, not evidence of misconduct.
+- Source conflicts, identifier mismatches, explicit warning flags and retraction-related updates are treated as review signals.
+- Unknown is kept separate from No.
+- Methodology section remains removed from the public page.
+- Search auto-scrolls to results.
 
-## Scopus source used
-The local enrichment was matched against the uploaded `ext_list_Jul_2026(1).xlsx`, sheet `Scopus Sources Jul. 2026`.
+## Important limitation: Google
+GitHub Pages cannot safely/consistently scrape Google Search results. Google's current Custom Search JSON API requires a configured search engine and API key, and Google states that the API is closed to new customers. JournalCheck therefore provides targeted Google investigation links instead of scraping snippets or treating Google results as authoritative evidence.
 
-For Research in Hospitality Management (ISSN 2224-3534 / eISSN 2415-5152), the uploaded Scopus source record is:
-- Source record ID: 21101440178
-- Active: Yes
-- Coverage: 2011–2026
-- Source type: Journal
-- Open access status: Unpaywall Open Access
-- Publisher: Taylor and Francis Ltd.
+## Source hierarchy
+1. Official journal / publisher and ISSN Portal for identity and policy claims.
+2. Uploaded Scopus / Web of Science datasets for indexing fields supplied by the researcher.
+3. DOAJ, OpenAlex and Crossref for independent metadata confirmation.
+4. SCImago for SJR/quartile when a verified SCImago record is available.
+5. Crossref / Retraction Watch for article-level retraction-related evidence.
+6. Google is an investigation/discovery layer only; search results must be opened and verified.
 
-## SJR handling
-SCImago is a separate source. The current public SCImago Journal & Country Rank page exposes 2024 as the latest ranking year in the public ranking interface and states that its metrics are based on Scopus data as of March 2025. The app therefore does not fabricate an SJR value when a journal is not present in the locally verified SJR dataset. Instead it provides an ISSN-specific SCImago lookup link.
-
-## Deployment
-Upload/replace:
+## Deploy
+Replace these in GitHub:
 - `index.html`
 - `app.js`
 - `data/journals.json`
 
-Commit all three together and wait for GitHub Pages to rebuild. Then hard-refresh the site (`Ctrl+F5`).
+Commit all together and wait for GitHub Pages to deploy. Then use `Ctrl+F5`.
