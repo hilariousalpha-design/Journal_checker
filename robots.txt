@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://hilariousalpha-design.github.io/Journal_checker/sitemap.xml
