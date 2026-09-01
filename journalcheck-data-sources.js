@@ -1,149 +1,545 @@
-/* JournalCheck — external evidence layer
-   Static-host friendly. External failures NEVER block local results.
-   Sources: Crossref, OpenAlex, DOAJ, Google Scholar link.
-   SJR is read only from the supplied SCImago 2025 dataset.
-*/
+/* ============================================================
+   JournalCheck — live data enrichment layer
+   Works with GitHub Pages / static hosting.
+
+   Local files expected:
+     data/journals.json
+     data/scimagojr-2025-journalcheck.csv
+     (optional) data/scopus.csv
+
+   Sources:
+     - Local JournalCheck master database
+     - SCImago 2025 CSV supplied by the project owner
+     - Crossref REST API
+     - OpenAlex Sources API
+     - DOAJ API (when browser access is allowed)
+     - Google Scholar: LINK ONLY; no scraping
+
+   IMPORTANT:
+   Never treat "not found" in one source as proof that a journal is
+   predatory. Missing data is reported separately from negative evidence.
+   ============================================================ */
+
 (() => {
-  'use strict';
+  "use strict";
+
   const CFG = {
-    master: './data/journals.json',
-    sjr: './data/scimagojr-2025-journalcheck.csv',
-    timeout: 9000,
-    politeMailto: ''
+    master: "./data/journals.json",
+    sjr: "./data/scimagojr-2025-journalcheck.csv",
+    timeout: 8000
   };
 
-  const clean = v => String(v ?? '').trim();
-  const normIssn = v => clean(v).replace(/[^0-9Xx]/g, '').toUpperCase();
-  const normTitle = v => clean(v).normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').replace(/\s+/g,' ').trim();
-  const esc = v => clean(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const $ = (id) => document.getElementById(id);
 
-  async function request(url, ms = CFG.timeout, options = {}) {
+  function clean(v) {
+    return String(v ?? "").trim();
+  }
+
+  function normTitle(v) {
+    return clean(v)
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function normIssn(v) {
+    return clean(v).replace(/[^0-9xX]/g, "").toUpperCase();
+  }
+
+  function esc(v) {
+    return String(v ?? "").replace(/[&<>"']/g, c => ({
+      "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;"
+    }[c]));
+  }
+
+  async function getJSON(url, timeout = CFG.timeout) {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), ms);
+    const timer = setTimeout(() => ctl.abort(), timeout);
     try {
-      const r = await fetch(url, { ...options, signal: ctl.signal, cache: 'no-store' });
+      const r = await fetch(url, {
+        signal: ctl.signal,
+        headers: { Accept: "application/json" },
+        cache: "no-store"
+      });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r;
-    } finally { clearTimeout(timer); }
-  }
-  async function json(url, ms) { return (await request(url, ms, {headers:{Accept:'application/json'}})).json(); }
-  async function text(url, ms) { return (await request(url, ms)).text(); }
-
-  function parseCSV(text) {
-    const rows=[]; let row=[], cell='', quoted=false;
-    for(let i=0;i<text.length;i++){
-      const c=text[i], n=text[i+1];
-      if(quoted){
-        if(c==='"' && n==='"'){cell+='"';i++;}
-        else if(c==='"') quoted=false; else cell+=c;
-      } else if(c==='"') quoted=true;
-      else if(c===';'){row.push(cell);cell='';}
-      else if(c==='\n'){row.push(cell);rows.push(row);row=[];cell='';}
-      else if(c!=='\r') cell+=c;
+      return await r.json();
+    } finally {
+      clearTimeout(timer);
     }
-    if(cell.length || row.length){row.push(cell);rows.push(row);}
-    if(!rows.length)return[];
-    const headers=rows[0].map(x=>clean(x));
-    return rows.slice(1).filter(r=>r.some(x=>clean(x))).map(r=>Object.fromEntries(headers.map((h,i)=>[h,r[i]??''])));
   }
 
-  let masterPromise=null, sjrPromise=null;
-  async function loadMaster(){
-    if(!masterPromise) masterPromise=(async()=>{
-      const d=await json(`${CFG.master}?v=${Date.now()}`,20000);
-      const records=Array.isArray(d)?d:(Array.isArray(d.records)?d.records:[]);
-      if(!records.length) throw new Error('Master database contains no records.');
-      return {version:d.version||'1.0',record_count:d.record_count||records.length,records};
-    })();
-    return masterPromise;
+  async function getText(url, timeout = 15000) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), timeout);
+    try {
+      const r = await fetch(url, { signal: ctl.signal, cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return await r.text();
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
-  async function loadLocalSJR(){
-    if(!sjrPromise) sjrPromise=(async()=>{
-      try{
-        const rows=parseCSV(await text(`${CFG.sjr}?v=${Date.now()}`,30000));
-        const byIssn=new Map();
-        for(const r of rows){
-          const item={rank:r.Rank||null,sourceId:r.Sourceid||null,title:r.Title||null,issn:r.Issn||null,publisher:r.Publisher||null,openAccess:r['Open Access']||null,sjr:r.SJR||null,quartile:r['SJR Best Quartile']||null,hIndex:r['H index']||null,coverage:r.Coverage||null,categories:r.Categories||null,areas:r.Areas||null,country:r.Country||null};
-          String(item.issn||'').split(/[\s,;]+/).map(normIssn).filter(x=>x.length>=7).forEach(id=>byIssn.set(id,item));
+  /* -------- CSV parser: handles quoted semicolon-separated SJR data -------- */
+  function parseSemicolonCSV(text) {
+    const rows = [];
+    let row = [], cell = "", quoted = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i], next = text[i + 1];
+
+      if (quoted) {
+        if (ch === '"' && next === '"') {
+          cell += '"'; i++;
+        } else if (ch === '"') {
+          quoted = false;
+        } else {
+          cell += ch;
         }
-        return {ok:true,count:rows.length,byIssn};
-      }catch(e){return {ok:false,count:0,byIssn:new Map(),error:e.message};}
-    })();
-    return sjrPromise;
-  }
-
-  function field(r,names){for(const n of names){if(r && r[n]!==undefined && clean(r[n])!=='')return r[n];}return ''}
-  function journal(r){return {raw:r,title:field(r,['t','title','journal','journal_title','name']),issn:field(r,['i','issn','ISSN','pissn']),eissn:field(r,['e','eissn','EISSN','online_issn']),publisher:field(r,['p','publisher','publisher_name']),country:field(r,['c','country']),language:field(r,['l','language','lang']),scie:field(r,['scie','SCIE']),ssci:field(r,['ssci','SSCI']),ahci:field(r,['ahci','AHCI']),esci:field(r,['esci','ESCI']),jcr:field(r,['jcr','jcr_2025','JCR 2025']),scopus:field(r,['sco','scopus','Scopus']),scopusActive:field(r,['sa','scopus_active','scopusActive','active']),scopusType:field(r,['st','scopus_source_type','source_type']),scopusOA:field(r,['oa','scopus_oa','open_access']),scopusCoverage:field(r,['cov','scopus_coverage','coverage']),scopusId:field(r,['scopus_id','source_id','sourceid']),scopusSubject:field(r,['scopus_subject','subject']),website:field(r,['website','url','journal_url','homepage'])};}
-
-  function similarity(a,b){
-    const A=new Set(normTitle(a).split(' ').filter(Boolean)), B=new Set(normTitle(b).split(' ').filter(Boolean));
-    if(!A.size||!B.size)return 0; let n=0; A.forEach(x=>B.has(x)&&n++); return n/Math.max(A.size,B.size);
-  }
-  function findMaster(records,q){
-    const query=clean(q), qi=normIssn(query);
-    if(qi.length>=7){for(const raw of records){const j=journal(raw);const ids=[j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/).map(normIssn));if(ids.includes(qi))return j;}}
-    const nq=normTitle(query); let best=null;
-    for(const raw of records){const j=journal(raw);const nt=normTitle(j.title);if(!nt)continue;let s=similarity(nt,nq)*100;if(nt===nq)s+=150;if(nt.startsWith(nq)&&nq.length>3)s+=45;if(nt.includes(nq)&&nq.length>4)s+=30;if(!best||s>best.score)best={score:s,journal:j};}
-    return best&&best.score>=28?best.journal:null;
-  }
-
-  async function crossref(j){
-    const ids=[j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/)).map(normIssn).filter(x=>x.length>=7);
-    for(const id of ids){
-      try{
-        const d=await json(`https://api.crossref.org/v1/journals/${encodeURIComponent(id)}${CFG.politeMailto?`?mailto=${encodeURIComponent(CFG.politeMailto)}`:''}`,7000);
-        const m=d.message||{};
-        return {found:!!m.title,title:Array.isArray(m.title)?m.title.join(' '):m.title||null,publisher:m.publisher||null,issns:m.ISSN||[],works:m.counts?.['total-dois']??null,url:`https://api.crossref.org/v1/journals/${encodeURIComponent(id)}`};
-      }catch(_){/* try next identifier */}
+      } else {
+        if (ch === '"') quoted = true;
+        else if (ch === ";") {
+          row.push(cell); cell = "";
+        } else if (ch === "\n") {
+          row.push(cell); rows.push(row); row = []; cell = "";
+        } else if (ch !== "\r") {
+          cell += ch;
+        }
+      }
     }
-    return {found:false,url:`https://api.crossref.org/journals/${encodeURIComponent(normIssn(j.eissn||j.issn))}`};
-  }
-
-  function openAlexNorm(s){return {found:true,id:s.id||null,title:s.display_name||null,publisher:s.host_organization_name||null,issns:[s.issn_l,...(s.issn||[])].filter(Boolean),works:s.works_count??null,citations:s.cited_by_count??null,hIndex:s.summary_stats?.h_index??null,i10Index:s.summary_stats?.i10_index??null,isOA:s.is_oa??null,isDOAJ:s.is_in_doaj??null,homepage:s.homepage_url||null,url:s.id||'https://openalex.org/'};}
-  async function openalex(j){
-    const ids=[j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/)).map(normIssn).filter(x=>x.length>=7);
-    for(const id of ids){
-      try{const d=await json(`https://api.openalex.org/sources/issn:${encodeURIComponent(id)}`,7000);if(d?.id)return openAlexNorm(d);}catch(_){}
-      try{const d=await json(`https://api.openalex.org/sources?filter=issn:${encodeURIComponent(id)}&per-page=5`,7000);if(d?.results?.[0]?.id)return openAlexNorm(d.results[0]);}catch(_){}
+    if (cell.length || row.length) {
+      row.push(cell); rows.push(row);
     }
-    if(j.title){try{const d=await json(`https://api.openalex.org/sources?search=${encodeURIComponent(j.title)}&per-page=10`,7000);const best=(d.results||[]).map(s=>({s,score:similarity(j.title,s.display_name)})).sort((a,b)=>b.score-a.score)[0];if(best&&best.score>=.65)return openAlexNorm(best.s);}catch(_){}
+
+    if (!rows.length) return [];
+    const headers = rows[0].map(x => x.trim());
+    return rows.slice(1)
+      .filter(r => r.some(x => clean(x)))
+      .map(r => Object.fromEntries(headers.map((h, i) => [h, r[i] ?? ""])));
+  }
+
+  function addIssn(index, issnValue, record) {
+    String(issnValue ?? "")
+      .split(/[,\s;]+/)
+      .map(normIssn)
+      .filter(x => x.length >= 7)
+      .forEach(x => index.set(x, record));
+  }
+
+  async function loadLocalSJR() {
+    try {
+      const text = await getText(CFG.sjr, 20000);
+      const rows = parseSemicolonCSV(text);
+      const byIssn = new Map();
+
+      for (const r of rows) {
+        const item = {
+          source: "SCImago Journal & Country Rank",
+          year: "2025",
+          rank: r["Rank"] || null,
+          sourceId: r["Sourceid"] || null,
+          title: r["Title"] || null,
+          issn: r["Issn"] || null,
+          publisher: r["Publisher"] || null,
+          openAccess: r["Open Access"] || null,
+          sjr: r["SJR"] || null,
+          quartile: r["SJR Best Quartile"] || null,
+          hIndex: r["H index"] || null,
+          coverage: r["Coverage"] || null,
+          categories: r["Categories"] || null,
+          areas: r["Areas"] || null,
+          country: r["Country"] || null
+        };
+        addIssn(byIssn, item.issn, item);
+      }
+
+      return { ok: true, count: rows.length, byIssn };
+    } catch (error) {
+      return { ok: false, count: 0, byIssn: new Map(), error: error.message };
     }
-    return {found:false,url:'https://openalex.org/'};
   }
 
-  async function doaj(j){
-    const ids=[j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/)).map(normIssn).filter(x=>x.length>=7);
-    for(const id of ids){
-      const urls=[`https://doaj.org/api/search/journals/issn:${encodeURIComponent(id)}?page=1&pageSize=1`,`https://doaj.org/api/search/journal.issn:${encodeURIComponent(id)}?page=1&pageSize=1`];
-      for(const u of urls){try{const d=await json(u,7000);const total=Number(d.total??d.meta?.count??0);return {found:total>0,total,record:d.results?.[0]?.bibjson||null,url:`https://doaj.org/?func=search&query=issn%3A${encodeURIComponent(id)}`};}catch(_){} }
+  async function loadMaster() {
+    const data = await getJSON(CFG.master, 20000);
+    return Array.isArray(data)
+      ? { version: "1.0", record_count: data.length, records: data }
+      : {
+          version: data.version ?? "1.0",
+          record_count: data.record_count ?? data.records?.length ?? 0,
+          records: Array.isArray(data.records) ? data.records : []
+        };
+  }
+
+  function getField(r, names) {
+    for (const n of names) {
+      if (r && r[n] !== undefined && r[n] !== null && clean(r[n]) !== "") return r[n];
     }
-    return {found:false,url:`https://doaj.org/?func=search&query=${encodeURIComponent(j.title||'')}`};
+    return null;
   }
 
-  function scholar(j){return {automated:false,url:`https://scholar.google.com/scholar?q=${encodeURIComponent(`"${j.title||''}" ${j.issn||j.eissn||''}`.trim())}`};}
+  function masterRecord(r) {
+    return {
+      raw: r,
+      title: getField(r, ["t","title","journal","journal_title","journalTitle","name"]),
+      issn: getField(r, ["i","issn","ISSN","pissn","print_issn"]),
+      eissn: getField(r, ["e","eissn","EISSN","online_issn","electronic_issn"]),
+      publisher: getField(r, ["p","publisher","publisher_name","publisherName"]),
+      country: getField(r, ["c","country","publisher_country","publisherCountry"]),
+      language: getField(r, ["l","language","lang"]),
 
-  function evidence(j,sjr,cr,oa,dj){return {journal:j,sjr,crossref:cr,openalex:oa,doaj:dj,googleScholar:scholar(j)};}
+      scie: getField(r, ["scie","SCIE"]),
+      ssci: getField(r, ["ssci","SSCI"]),
+      ahci: getField(r, ["ahci","AHCI"]),
+      esci: getField(r, ["esci","ESCI"]),
+      jcr: getField(r, ["jcr","jcr_2025","JCR 2025"]),
 
-  function concern(result){
-    const j=result.journal, signals=[]; let score=0;
-    if(result.crossref?.found && result.crossref.title && similarity(j.title,result.crossref.title)<.55){score+=30;signals.push({points:30,label:'Crossref identity mismatch',detail:'The Crossref journal title does not closely match the master record for the supplied identifier.'});}
-    if(result.openalex?.found){const expected=[j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/)).map(normIssn).filter(x=>x.length>=7);const actual=(result.openalex.issns||[]).map(normIssn);if(expected.length&&actual.length&&!expected.some(x=>actual.includes(x))){score+=30;signals.push({points:30,label:'OpenAlex identifier mismatch',detail:'OpenAlex returned a source whose ISSN identifiers do not align with the journal record.'});}}
-    if(result.crossref?.found && result.crossref.publisher && j.publisher && similarity(result.crossref.publisher,j.publisher)<.35){score+=15;signals.push({points:15,label:'Publisher metadata mismatch',detail:'Publisher metadata differs materially between the local record and Crossref.'});}
-    if(j.scopus==='Yes' && j.scopusActive==='No'){score+=10;signals.push({points:10,label:'Scopus status needs attention',detail:'The master dataset marks the journal as Scopus indexed but not currently active.'});}
-    const band=score>=75?'Extreme concern':score>=50?'High concern':score>=25?'Moderate concern':'Low concern';
-    return {score,band,signals,disclaimer:'This is an evidence-screening profile, not a definitive predatory-journal verdict. Missing DOAJ, SJR, Crossref or OpenAlex data is not itself a misconduct finding.'};
+      scopus: getField(r, ["scopus","Scopus","sco","scopus_indexed"]),
+      scopusActive: getField(r, ["scopus_active","scopusActive","scopus_active_status","active"]),
+      scopusId: getField(r, ["scopus_id","source_id","scopus_source_id","sourceid"]),
+      scopusCoverage: getField(r, ["scopus_coverage","coverage_years","scopus_coverage_years","coverage","cov"]),
+      scopusType: getField(r, ["scopus_source_type","source_type","scopus_type","st"]),
+      scopusOA: getField(r, ["scopus_oa","scopusOA","open_access","oa"]),
+      citeScore: getField(r, ["citescore","cite_score","CiteScore","cs","citescore_2025","citescore_2024"]),
+      snip: getField(r, ["snip","SNIP","snip_2025","snip_2024"]),
+
+      doaj: getField(r, ["doaj","DOAJ","doaj_indexed"]),
+      cope: getField(r, ["cope","COPE"]),
+      website: getField(r, ["website","url","journal_url","homepage","homepage_url","official_site","official_website"])
+    };
   }
 
-  async function checkJournal(query){
-    const [master,sjrdb]=await Promise.all([loadMaster(),loadLocalSJR()]);
-    const j=findMaster(master.records,query);
-    if(!j)return {found:false,query,database:{records:master.record_count,version:master.version,sjrRecords:sjrdb.count,sjrLoaded:sjrdb.ok}};
-    let sjr=null; for(const id of [j.issn,j.eissn].flatMap(v=>String(v).split(/[\s,;]+/)).map(normIssn)){if(sjrdb.byIssn.has(id)){sjr=sjrdb.byIssn.get(id);break;}}
-    const [cr,oa,dj]=await Promise.all([crossref(j).catch(()=>({found:false})),openalex(j).catch(()=>({found:false})),doaj(j).catch(()=>({found:false}))]);
-    const result=evidence(j,sjr,cr,oa,dj); const risk=concern(result);
-    return {found:true,result,risk,database:{records:master.record_count,version:master.version,sjrRecords:sjrdb.count,sjrLoaded:sjrdb.ok}};
+  function tokenSimilarity(a, b) {
+    const A = new Set(normTitle(a).split(" ").filter(Boolean));
+    const B = new Set(normTitle(b).split(" ").filter(Boolean));
+    if (!A.size || !B.size) return 0;
+    let same = 0;
+    A.forEach(x => { if (B.has(x)) same++; });
+    return same / Math.max(A.size, B.size);
   }
 
-  window.JournalCheckSources={checkJournal,loadMaster,loadLocalSJR,findMaster,concern};
+  function findMaster(records, query) {
+    const q = clean(query);
+    const qIssn = normIssn(q);
+
+    if (qIssn.length >= 7) {
+      for (const r of records) {
+        const x = masterRecord(r);
+        const all = [x.issn, x.eissn].flatMap(v =>
+          String(v ?? "").split(/[,\s;]+/).map(normIssn)
+        );
+        if (all.includes(qIssn)) return x;
+      }
+    }
+
+    const nq = normTitle(q);
+    let best = null;
+
+    for (const r of records) {
+      const x = masterRecord(r);
+      const nt = normTitle(x.title);
+      if (!nt) continue;
+
+      let score = tokenSimilarity(nt, nq) * 100;
+      if (nt === nq) score += 150;
+      if (nt.includes(nq) && nq.length > 4) score += 70;
+
+      if (!best || score > best.score) best = { score, journal: x };
+    }
+
+    return best && best.score >= 25 ? best.journal : null;
+  }
+
+  /* -------- Crossref -------- */
+  async function crossref(j) {
+    const issns = [j.issn, j.eissn]
+      .flatMap(v => String(v ?? "").split(/[,\s;]+/))
+      .filter(Boolean);
+
+    for (const raw of issns) {
+      const issn = normIssn(raw);
+      if (issn.length < 7) continue;
+
+      try {
+        const d = await getJSON(
+          `https://api.crossref.org/journals/${encodeURIComponent(issn)}`,
+          7000
+        );
+        const m = d.message || {};
+        return {
+          found: !!m.title,
+          title: Array.isArray(m.title) ? m.title.join(" ") : m.title || null,
+          publisher: m.publisher || null,
+          issns: m.ISSN || [],
+          works: m.counts?.["total-dois"] ?? m.count ?? null,
+          source: "Crossref REST API",
+          url: `https://api.crossref.org/journals/${encodeURIComponent(issn)}`
+        };
+      } catch (_) {}
+    }
+
+    return { found: false, source: "Crossref REST API" };
+  }
+
+  /* -------- OpenAlex --------
+     The direct ISSN endpoint is valid, but a 404 can simply mean the
+     ISSN is absent from OpenAlex. Therefore we fall back to filter and
+     then title search. */
+  async function openAlex(j) {
+    const issns = [j.issn, j.eissn]
+      .flatMap(v => String(v ?? "").split(/[,\s;]+/))
+      .map(normIssn)
+      .filter(x => x.length >= 7);
+
+    for (const issn of issns) {
+      try {
+        const d = await getJSON(
+          `https://api.openalex.org/sources/issn:${encodeURIComponent(issn)}`,
+          7000
+        );
+        if (d?.id) return normalizeOpenAlex(d);
+      } catch (_) {}
+
+      try {
+        const d = await getJSON(
+          `https://api.openalex.org/sources?filter=issn:${encodeURIComponent(issn)}&per-page=5`,
+          7000
+        );
+        const s = d?.results?.[0];
+        if (s?.id) return normalizeOpenAlex(s);
+      } catch (_) {}
+    }
+
+    if (j.title) {
+      try {
+        const d = await getJSON(
+          `https://api.openalex.org/sources?search=${encodeURIComponent(j.title)}&per-page=10`,
+          7000
+        );
+
+        const candidates = d?.results || [];
+        const best = candidates
+          .map(s => ({ s, score: tokenSimilarity(j.title, s.display_name) }))
+          .sort((a,b) => b.score - a.score)[0];
+
+        if (best && best.score >= 0.55) return normalizeOpenAlex(best.s);
+      } catch (_) {}
+    }
+
+    return { found: false, source: "OpenAlex" };
+  }
+
+  function normalizeOpenAlex(s) {
+    return {
+      found: true,
+      id: s.id,
+      title: s.display_name || null,
+      publisher: s.host_organization_name || s.publisher || null,
+      issns: [s.issn_l, ...(s.issn || [])].filter(Boolean),
+      works: s.works_count ?? null,
+      citations: s.cited_by_count ?? null,
+      hIndex: s.summary_stats?.h_index ?? null,
+      i10Index: s.summary_stats?.i10_index ?? null,
+      twoYearMeanCitedness: s.summary_stats?.["2yr_mean_citedness"] ?? null,
+      isOA: s.is_oa ?? null,
+      isDOAJ: s.is_in_doaj ?? null,
+      country: s.country_code ?? null,
+      homepage: s.homepage_url ?? null,
+      apcUSD: s.apc_usd ?? null,
+      source: "OpenAlex",
+      url: s.id || "https://openalex.org/"
+    };
+  }
+
+  /* -------- DOAJ -------- */
+  async function doaj(j) {
+    const issns = [j.issn, j.eissn]
+      .flatMap(v => String(v ?? "").split(/[,\s;]+/))
+      .map(normIssn)
+      .filter(x => x.length >= 7);
+
+    for (const issn of issns) {
+      const urls = [
+        `https://doaj.org/api/search/journals/issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,
+        `https://doaj.org/api/search/journal.issn:${encodeURIComponent(issn)}?page=1&pageSize=1`
+      ];
+
+      for (const url of urls) {
+        try {
+          const d = await getJSON(url, 7000);
+          const total = Number(d.total ?? d.meta?.count ?? 0);
+          const item = d.results?.[0]?.bibjson || d.results?.[0] || null;
+
+          return {
+            found: total > 0,
+            total,
+            record: item,
+            source: "DOAJ API",
+            url: `https://doaj.org/toc/${encodeURIComponent(issn)}`
+          };
+        } catch (_) {}
+      }
+    }
+
+    return {
+      found: false,
+      source: "DOAJ",
+      url: j.eissn || j.issn
+        ? `https://doaj.org/search/journals?ref=issn%3A${encodeURIComponent(normIssn(j.eissn || j.issn))}`
+        : "https://doaj.org/"
+    };
+  }
+
+  /* -------- Google Scholar --------
+     There is no official public Google Scholar journal API. Do NOT scrape
+     Scholar from a GitHub Pages browser. Instead provide a transparent
+     Scholar search link and label citation/H-index figures from OpenAlex
+     or SJR separately. */
+  function googleScholar(j) {
+    const q = `"${j.title || ""}" ${j.issn || j.eissn || ""}`.trim();
+    return {
+      source: "Google Scholar",
+      automated: false,
+      url: `https://scholar.google.com/scholar?q=${encodeURIComponent(q)}`
+    };
+  }
+
+  function merge(j, sjr, cr, oa, dj) {
+    const result = {
+      ...j,
+      sjr: sjr || null,
+      crossref: cr,
+      openalex: oa,
+      doaj: dj,
+      googleScholar: googleScholar(j)
+    };
+
+    /* Use SJR as the authoritative source for SJR / quartile / SJR H-index.
+       Never replace SJR with OpenAlex. */
+    if (sjr) {
+      result.sjrValue = sjr.sjr;
+      result.sjrQuartile = sjr.quartile;
+      result.sjrHIndex = sjr.hIndex;
+      result.sjrRank = sjr.rank;
+      result.sjrCoverage = sjr.coverage;
+      result.sjrCategories = sjr.categories;
+    }
+
+    return result;
+  }
+
+  /* -------- Evidence / concern screening --------
+     This is a screening system, NOT a predatory-journal verdict. */
+  function concernProfile(j) {
+    const signals = [];
+
+    if (j.crossref?.found && j.title && j.crossref.title) {
+      if (tokenSimilarity(j.title, j.crossref.title) < 0.55) {
+        signals.push({
+          points: 30,
+          level: "high",
+          label: "Crossref identity mismatch",
+          detail: "The title returned for the ISSN differs substantially from the master record."
+        });
+      }
+    }
+
+    if (j.openalex?.found) {
+      const expected = [j.issn, j.eissn]
+        .flatMap(v => String(v ?? "").split(/[,\s;]+/))
+        .map(normIssn)
+        .filter(x => x.length >= 7);
+
+      const actual = (j.openalex.issns || []).map(normIssn);
+      if (expected.length && actual.length && !expected.some(x => actual.includes(x))) {
+        signals.push({
+          points: 30,
+          level: "high",
+          label: "OpenAlex identifier mismatch",
+          detail: "OpenAlex returned a source whose ISSN identifiers do not align with the searched journal."
+        });
+      }
+    }
+
+    /* Missing DOAJ / Scopus / SJR is NOT automatically a risk signal. */
+    return {
+      score: Math.min(100, signals.reduce((a, x) => a + x.points, 0)),
+      signals
+    };
+  }
+
+  function concernBand(score) {
+    if (score >= 75) return "Extreme concern";
+    if (score >= 50) return "High concern";
+    if (score >= 25) return "Moderate concern";
+    return "Low concern";
+  }
+
+  /* -------- Main public function -------- */
+  async function checkJournal(query) {
+    const master = await loadMaster();
+    const sjrDB = await loadLocalSJR();
+
+    const j = findMaster(master.records, query);
+
+    if (!j) {
+      return {
+        found: false,
+        query,
+        database: {
+          records: master.record_count,
+          version: master.version,
+          sjrRecords: sjrDB.count
+        }
+      };
+    }
+
+    /* External services run in parallel. One failure must never stop the
+       result page from rendering. */
+    const [cr, oa, dj] = await Promise.all([
+      crossref(j).catch(e => ({ found: false, error: e.message, source: "Crossref" })),
+      openAlex(j).catch(e => ({ found: false, error: e.message, source: "OpenAlex" })),
+      doaj(j).catch(e => ({ found: null, error: e.message, source: "DOAJ" }))
+    ]);
+
+    const ids = [j.issn, j.eissn]
+      .flatMap(v => String(v ?? "").split(/[,\s;]+/))
+      .map(normIssn)
+      .filter(x => x.length >= 7);
+
+    let sjr = null;
+    for (const id of ids) {
+      if (sjrDB.byIssn.has(id)) {
+        sjr = sjrDB.byIssn.get(id);
+        break;
+      }
+    }
+
+    const result = merge(j, sjr, cr, oa, dj);
+    const risk = concernProfile(result);
+
+    return {
+      found: true,
+      result,
+      risk: {
+        ...risk,
+        band: concernBand(risk.score)
+      },
+      database: {
+        records: master.record_count,
+        version: master.version,
+        sjrRecords: sjrDB.count,
+        sjrLoaded: sjrDB.ok
+      }
+    };
+  }
+
+  window.JournalCheckSources = {
+    checkJournal,
+    loadLocalSJR,
+    loadMaster,
+    concernProfile,
+    concernBand
+  };
 })();
