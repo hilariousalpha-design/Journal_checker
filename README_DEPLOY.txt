@@ -1,18 +1,24 @@
-JournalCheck FINAL — SJR FIXED BUILD
+JournalCheck FINAL deployment
 
-Upload these files/folders exactly:
-index.html
-app.js
-journalcheck-data-sources.js
-data/journals.json
-data/sjr-2025.json
+Upload exactly these items to the GitHub repository root:
+  index.html
+  app.js
+  journalcheck-data-sources.js
+  data/journals.json
+  data/sjr-2025.json
 
-Delete older duplicate files before uploading.
+The 50,608-record master database is preserved. Do not replace it with a smaller dataset.
+The SJR file is the supplied 2025 JSON dataset and is matched by normalized ISSN/eISSN.
 
-IMPORTANT:
-- Keep journals.json and sjr-2025.json inside the data folder.
-- Do not rename the data folder.
-- The app now loads SJR from a compact JSON index instead of parsing the 11 MB CSV in the browser.
-- SJR dataset: SCImago Journal & Country Rank 2025 supplied by the project owner.
-- Example: STATISTICA (ISSN 0390-590X / 1973-2201) should show SJR 0,179, Q4, H-index 11, rank 23355.
-- SJR status should say 32,193 records loaded after deployment.
+After committing, wait for GitHub Pages to deploy, then hard-refresh the site (Ctrl+F5).
+Test:
+  Research in Hospitality Management
+  Statistica
+  2224-3534
+
+Expected behavior:
+- local journal result renders immediately;
+- SJR is read from data/sjr-2025.json;
+- Crossref/OpenAlex/DOAJ checks enrich the result without blocking the local result;
+- Google Scholar is a manual search link only (no scraping);
+- missing evidence is not treated as a predatory-journal verdict.
