@@ -1,24 +1,12 @@
-JournalCheck FINAL deployment
+JournalCheck deployment
 
-Upload exactly these items to the GitHub repository root:
-  index.html
-  app.js
-  journalcheck-data-sources.js
-  data/journals.json
-  data/sjr-2025.json
+Keep this exact structure on GitHub Pages:
+index.html
+app.js
+journalcheck-data-sources.js
+data/journals.json
+data/sjr-2025.json
 
-The 50,608-record master database is preserved. Do not replace it with a smaller dataset.
-The SJR file is the supplied 2025 JSON dataset and is matched by normalized ISSN/eISSN.
+The live evidence layer checks Crossref, OpenAlex and DOAJ independently after the local journal match is rendered. A network/CORS/API failure is shown as UNAVAILABLE, never as NOT FOUND. OpenAlex's is_in_doaj field is also displayed as secondary DOAJ evidence. Google Scholar is provided as an official manual search link; Google Scholar does not offer a public browser API for safe scraping of citation/H-index values.
 
-After committing, wait for GitHub Pages to deploy, then hard-refresh the site (Ctrl+F5).
-Test:
-  Research in Hospitality Management
-  Statistica
-  2224-3534
-
-Expected behavior:
-- local journal result renders immediately;
-- SJR is read from data/sjr-2025.json;
-- Crossref/OpenAlex/DOAJ checks enrich the result without blocking the local result;
-- Google Scholar is a manual search link only (no scraping);
-- missing evidence is not treated as a predatory-journal verdict.
+Do not move journals.json or sjr-2025.json out of data/.
