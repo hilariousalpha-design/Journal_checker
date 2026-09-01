@@ -1,4 +1,4 @@
-/* JournalCheck live evidence layer v9
+/* JournalCheck live evidence layer v10
    Each provider is checked independently. A network/CORS/API failure is
    reported as UNAVAILABLE, never as NOT FOUND.
 */
@@ -36,7 +36,7 @@
       const workUrl=`https://api.crossref.org/works?filter=issn:${encodeURIComponent(issn)}&rows=0`;
       try{
         const d=await getJSON(workUrl), msg=d?.message;
-        const count=Number(msg?.totalResults ?? msg?."total-results" ?? 0);
+        const count=Number(msg?.totalResults ?? msg?.["total-results"] ?? 0);
         if(count>0){
           let meta=null;
           try{ meta=(await getJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}`))?.message||null; }catch(_){ }
@@ -53,7 +53,7 @@
       try{
         const items=(await getJSON(url))?.message?.items||[];
         const best=items.map(x=>({x,score:similarity(j.title,x.title?.[0]||"")})).sort((a,b)=>b.score-a.score)[0];
-        if(best?.score>=.70){const x=best.x;return confirmed("Crossref",x.resource?.primary?.URL||url,{title:x.title?.[0]||j.title,publisher:x.publisher||null,issn:x.ISSN||[],works:x.counts?.total-dois??null,matchScore:best.score,sourceMatch:"title"});}
+        if(best?.score>=.70){const x=best.x;return confirmed("Crossref",x.resource?.primary?.URL||url,{title:x.title?.[0]||j.title,publisher:x.publisher||null,issn:x.ISSN||[],works:x.counts?.["total-dois"]??null,matchScore:best.score,sourceMatch:"title"});}
         return notFound("Crossref",url);
       }catch(e){lastError=e;}
     }

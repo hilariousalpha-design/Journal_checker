@@ -24,3 +24,23 @@ Statuses are deliberately separated:
 Confirmed = provider returned a matching record.
 Not found = provider responded successfully but no match was found.
 Unavailable = network/CORS/API failure; never treat as evidence against a journal.
+
+
+FINAL v10 FIX
+-------------
+The live evidence script had invalid JavaScript optional-chaining syntax:
+  msg?."total-results"
+It is now:
+  msg?.["total-results"]
+
+The Crossref total-DOI property access was also normalized to:
+  x.counts?.["total-dois"]
+
+Upload the contents of this ZIP to the GitHub repository root, preserving:
+  data/journals.json
+  data/sjr-2025.json
+
+After committing, wait for GitHub Pages to redeploy, then hard-refresh the site
+(Ctrl+Shift+R). The external checks are still subject to each provider's
+browser/API/CORS policy. Google Scholar remains a manual official-search link;
+it is not scraped.
