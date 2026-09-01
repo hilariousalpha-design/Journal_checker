@@ -1,485 +1,3424 @@
-/* JournalCheck v3
-   Static GitHub Pages build.
-   - Keeps the existing journals.json compatible with compact keys such as t/i/e/p.
-   - Reads optional enrichment fields when present.
-   - Uses OpenAlex + Crossref as external metadata confirmations.
-   - DOAJ is attempted as a public lookup but failure is shown as Unknown, never No.
-   - Scopus/SJR/JCR data must come from the local verified dataset; the app never invents it.
-*/
+/* ============================================================
+   JournalCheck — Production Search Engine
+   Version: 3.0
+
+   PRIMARY DATA:
+     ./data/journals.json
+
+   EXTERNAL VERIFICATION:
+     OpenAlex
+     Crossref
+     DOAJ
+     ISSN Portal
+     SCImago
+     Google investigation links
+
+   IMPORTANT:
+     External services NEVER block the local search.
+     Missing information is NEVER treated as misconduct.
+   ============================================================ */
 
 (() => {
   "use strict";
 
-  const $ = (s) => document.querySelector(s);
-  const esc = (v) => String(v ?? "").replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  const norm = (v) => String(v ?? "").trim();
-  const digits = (v) => norm(v).replace(/[^0-9Xx]/g, "").toUpperCase();
-  const cleanTitle = (v) => norm(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").replace(/\s+/g," ").trim();
-  const compactTitle = (v) => cleanTitle(v).replace(/\b(the|journal|of|and|in|for|a|an)\b/g," ").replace(/\s+/g," ").trim();
+  /* ==========================================================
+     BASIC HELPERS
+     ========================================================== */
 
-  let DB = {version:"—", record_count:0, records:[]};
-  let current = null;
+  const $ = id => document.getElementById(id);
 
-  const FIELD = {
-    title: ["t","title","journal","journal_title","name"],
-    issn: ["i","issn","pissn","print_issn"],
-    eissn: ["e","eissn","online_issn","electronic_issn"],
-    publisher: ["p","publisher","publisher_name"],
-    country: ["c","country","publisher_country"],
-    language: ["l","language","lang"],
-    scie: ["scie","SCIE"],
-    ssci: ["ssci","SSCI"],
-    ahci: ["ahci","AHCI"],
-    esci: ["esci","ESCI"],
-    jcr: ["jcr","jcr_2025","JCR 2025"],
-    scopus: ["scopus","Scopus","sco"],
-    scopusActive: ["scopus_active","scopusActive","scopus_active_status","sa"],
-    scopusId: ["scopus_id","source_id","scopus_source_id"],
-    scopusCoverage: ["scopus_coverage","coverage_years","scopus_coverage_years","cov"],
-    scopusType: ["scopus_source_type","source_type","st"],
-    scopusOA: ["scopus_oa","oa","scopusOA"],
-    citescore: ["citescore","cite_score","CiteScore","cs","citescore_2025"],
-    snip: ["snip","SNIP"],
-    sjr: ["sjr","SJR","scimago_sjr","sjr_2024","sjr_2025"],
-    quartile: ["quartile","best_quartile","sjr_quartile","scimago_quartile","q","sjr_q","scimago_q"],
-    hindex: ["h_index","hindex","H_index"],
-    subject: ["subject","subject_area","scimago_subject","scopus_subject","asjc","scopus_asjc"],
-    doaj: ["doaj","DOAJ","doaj_indexed"],
-    openalex: ["openalex","OpenAlex","openalex_id"],
-    crossref: ["crossref","Crossref"],
-    cope: ["cope","COPE"],
-    peerReview: ["peer_review","peer_review_policy","peer_review_type"],
-    editorialBoard: ["editorial_board","editors","editorial_board_info"],
-    apc: ["apc","apc_info","article_processing_charge","fees"],
-    license: ["license","licence","license_policy"],
-    copyright: ["copyright","copyright_policy"],
-    ethics: ["ethics","publication_ethics","ethics_policy"],
-    retraction: ["retraction","correction_policy","retractions"],
-    archiving: ["archiving","preservation","digital_archiving"],
-    doi: ["doi","doi_prefix","persistent_identifier"],
-    website: ["website","url","journal_url","homepage","homepage_url"],
-    official: ["official_site","official_website"],
-    warning: ["warning","risk_warning","risk_flags","risk_signals"]
+  const esc = value =>
+    String(value ?? "").replace(/[&<>"']/g, c => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[c]));
+
+  const clean = value =>
+    String(value ?? "")
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const digits = value =>
+    String(value ?? "")
+      .replace(/[^0-9xX]/g, "")
+      .toUpperCase();
+
+  const text = value => {
+    if (
+      value === null ||
+      value === undefined ||
+      String(value).trim() === ""
+    ) {
+      return "Not available";
+    }
+    return String(value);
   };
 
-  function val(r, key) {
-    const keys = FIELD[key] || [key];
-    for (const k of keys) if (r && r[k] !== undefined && r[k] !== null && norm(r[k]) !== "") return r[k];
+  const has = value =>
+    value !== null &&
+    value !== undefined &&
+    String(value).trim() !== "";
+
+  /* ==========================================================
+     DATABASE
+     ========================================================== */
+
+  let DB = {
+    version: "—",
+    record_count: 0,
+    records: []
+  };
+
+  let databaseLoaded = false;
+  let currentRecord = null;
+
+  let titleIndex = [];
+  let issnIndex = new Map();
+
+  /* ==========================================================
+     FIELD MAPPING
+     Supports both compact JSON and descriptive column names.
+     ========================================================== */
+
+  const FIELD = {
+
+    title: [
+      "t",
+      "title",
+      "journal",
+      "journal_title",
+      "journalTitle",
+      "name"
+    ],
+
+    issn: [
+      "i",
+      "issn",
+      "ISSN",
+      "pissn",
+      "print_issn",
+      "printISSN"
+    ],
+
+    eissn: [
+      "e",
+      "eissn",
+      "EISSN",
+      "online_issn",
+      "electronic_issn",
+      "onlineISSN"
+    ],
+
+    publisher: [
+      "p",
+      "publisher",
+      "publisher_name",
+      "publisherName"
+    ],
+
+    country: [
+      "c",
+      "country",
+      "publisher_country",
+      "publisherCountry"
+    ],
+
+    language: [
+      "l",
+      "language",
+      "lang"
+    ],
+
+    /* Web of Science */
+
+    scie: [
+      "scie",
+      "SCIE",
+      "sci",
+      "web_of_science_scie"
+    ],
+
+    ssci: [
+      "ssci",
+      "SSCI",
+      "web_of_science_ssci"
+    ],
+
+    ahci: [
+      "ahci",
+      "AHCI",
+      "web_of_science_ahci"
+    ],
+
+    esci: [
+      "esci",
+      "ESCI",
+      "web_of_science_esci"
+    ],
+
+    jcr: [
+      "jcr",
+      "jcr_2025",
+      "JCR 2025",
+      "jcr2025"
+    ],
+
+    /* Scopus */
+
+    scopus: [
+      "scopus",
+      "Scopus",
+      "sco",
+      "scopus_indexed"
+    ],
+
+    scopusActive: [
+      "scopus_active",
+      "scopusActive",
+      "scopus_active_status",
+      "scopusActiveStatus",
+      "sa",
+      "active"
+    ],
+
+    scopusId: [
+      "scopus_id",
+      "source_id",
+      "scopus_source_id",
+      "sourceid"
+    ],
+
+    scopusCoverage: [
+      "scopus_coverage",
+      "coverage_years",
+      "scopus_coverage_years",
+      "coverage",
+      "cov"
+    ],
+
+    scopusType: [
+      "scopus_source_type",
+      "source_type",
+      "scopus_type",
+      "st"
+    ],
+
+    scopusOA: [
+      "scopus_oa",
+      "scopusOA",
+      "open_access",
+      "oa"
+    ],
+
+    citeScore: [
+      "citescore",
+      "cite_score",
+      "CiteScore",
+      "cs",
+      "citescore_2025",
+      "citescore_2024"
+    ],
+
+    snip: [
+      "snip",
+      "SNIP",
+      "snip_2025",
+      "snip_2024"
+    ],
+
+    sjr: [
+      "sjr",
+      "SJR",
+      "scimago_sjr",
+      "sjr_2025",
+      "sjr_2024"
+    ],
+
+    quartile: [
+      "quartile",
+      "best_quartile",
+      "sjr_quartile",
+      "scimago_quartile",
+      "q",
+      "sjr_q",
+      "scimago_q",
+      "quartile_2025",
+      "quartile_2024"
+    ],
+
+    hindex: [
+      "h_index",
+      "hindex",
+      "H_index",
+      "h_index_2025",
+      "h_index_2024"
+    ],
+
+    subject: [
+      "subject",
+      "subject_area",
+      "subject_area_name",
+      "scimago_subject",
+      "scopus_subject",
+      "asjc"
+    ],
+
+    /* External databases */
+
+    doaj: [
+      "doaj",
+      "DOAJ",
+      "doaj_indexed"
+    ],
+
+    openalex: [
+      "openalex",
+      "OpenAlex",
+      "openalex_id"
+    ],
+
+    crossref: [
+      "crossref",
+      "Crossref"
+    ],
+
+    cope: [
+      "cope",
+      "COPE"
+    ],
+
+    /* Transparency */
+
+    peerReview: [
+      "peer_review",
+      "peer_review_policy",
+      "peer_review_type"
+    ],
+
+    editorialBoard: [
+      "editorial_board",
+      "editorialBoard",
+      "editors"
+    ],
+
+    apc: [
+      "apc",
+      "apc_info",
+      "article_processing_charge",
+      "fees"
+    ],
+
+    license: [
+      "license",
+      "licence",
+      "license_policy"
+    ],
+
+    copyright: [
+      "copyright",
+      "copyright_policy"
+    ],
+
+    ethics: [
+      "ethics",
+      "publication_ethics",
+      "ethics_policy"
+    ],
+
+    retraction: [
+      "retraction",
+      "correction_policy",
+      "retractions"
+    ],
+
+    archiving: [
+      "archiving",
+      "preservation",
+      "digital_archiving"
+    ],
+
+    doi: [
+      "doi",
+      "doi_prefix",
+      "persistent_identifier"
+    ],
+
+    website: [
+      "website",
+      "url",
+      "journal_url",
+      "homepage",
+      "homepage_url",
+      "official_site",
+      "official_website"
+    ],
+
+    warning: [
+      "warning",
+      "risk_warning",
+      "risk_flags",
+      "risk_signals",
+      "predatory_warning"
+    ]
+  };
+
+  function value(record, key) {
+
+    if (!record) return null;
+
+    for (const field of FIELD[key] || [key]) {
+
+      if (
+        Object.prototype.hasOwnProperty.call(record, field) &&
+        has(record[field])
+      ) {
+        return record[field];
+      }
+    }
+
     return null;
   }
 
-  function boolState(v) {
-    if (v === null || v === undefined || v === "") return "unknown";
-    if (typeof v === "boolean") return v ? "yes" : "no";
-    const s = norm(v).toLowerCase();
-    if (["yes","y","true","1","active","indexed","included","verified"].includes(s)) return "yes";
-    if (["no","n","false","0","inactive","not indexed","not included","discontinued","stopped"].includes(s)) return "no";
+  /* ==========================================================
+     BOOLEAN STATUS
+     ========================================================== */
+
+  function boolState(value) {
+
+    if (!has(value)) return "unknown";
+
+    if (typeof value === "boolean") {
+      return value ? "yes" : "no";
+    }
+
+    const s = clean(value);
+
+    if (
+      [
+        "yes",
+        "y",
+        "true",
+        "1",
+        "active",
+        "indexed",
+        "included",
+        "verified",
+        "present"
+      ].includes(s)
+    ) {
+      return "yes";
+    }
+
+    if (
+      [
+        "no",
+        "n",
+        "false",
+        "0",
+        "inactive",
+        "not indexed",
+        "not included",
+        "discontinued",
+        "stopped",
+        "absent"
+      ].includes(s)
+    ) {
+      return "no";
+    }
+
     return "unknown";
   }
 
-  function status(v, yesLabel="Yes", noLabel="No") {
-    const s = boolState(v);
-    if (s==="yes") return `<span class="status yes">✓ ${yesLabel}</span>`;
-    if (s==="no") return `<span class="status no">× ${noLabel}</span>`;
+  function statusBadge(value) {
+
+    const state = boolState(value);
+
+    if (state === "yes") {
+      return `<span class="status yes">✓ Yes</span>`;
+    }
+
+    if (state === "no") {
+      return `<span class="status no">× No</span>`;
+    }
+
     return `<span class="status unknown">— Not available</span>`;
   }
 
-  function textOrNA(v) { return v === null || v === undefined || norm(v)==="" ? "Not available" : esc(v); }
+  function stateBadge(state) {
 
-  async function fetchJSON(url, timeout=10000) {
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(), timeout);
-    try {
-      const res = await fetch(url, {signal:controller.signal, headers:{"Accept":"application/json"}});
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
-    } finally { clearTimeout(timer); }
+    if (state === "yes") {
+      return `<span class="status yes">✓ Confirmed</span>`;
+    }
+
+    if (state === "no") {
+      return `<span class="status no">× Not found</span>`;
+    }
+
+    return `<span class="status unknown">— Unknown</span>`;
   }
+
+  /* ==========================================================
+     FETCH WITH TIMEOUT
+     ========================================================== */
+
+  async function fetchJSON(url, timeout = 6000) {
+
+    const controller = new AbortController();
+
+    const timer = setTimeout(
+      () => controller.abort(),
+      timeout
+    );
+
+    try {
+
+      const response = await fetch(url, {
+        signal: controller.signal,
+        cache: "no-store",
+        headers: {
+          Accept: "application/json"
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      return await response.json();
+
+    } finally {
+
+      clearTimeout(timer);
+    }
+  }
+
+  /* ==========================================================
+     DATABASE LOADING
+     ========================================================== */
 
   async function loadDatabase() {
-    const paths = ["./data/journals.json","./journals.json","data/journals.json","journals.json"];
-    let lastError = null;
-    for (const path of paths) {
-      try {
-        const data = await fetchJSON(path, 20000);
-        if (Array.isArray(data)) DB = {version:"1.0",record_count:data.length,records:data};
-        else DB = {version:data.version ?? "1.0",record_count:data.record_count ?? data.records?.length ?? 0,records:Array.isArray(data.records)?data.records:[]};
-        if (!DB.records.length) throw new Error("Database contains no records");
-        $("#dbStatus").textContent = "Ready";
-        $("#recordCount").textContent = Number(DB.record_count).toLocaleString();
-        $("#datasetVersion").textContent = DB.version;
-        $("#dbDot").style.background = "#20a66f";
-        return true;
-      } catch(e) { lastError = e; }
+
+    if (databaseLoaded) {
+      return true;
     }
-    $("#dbStatus").textContent = "Error";
-    $("#dbDot").style.background = "#c53b42";
-    $("#emptyBox").innerHTML = `<div class="error"><strong>Database could not be loaded.</strong><br>${esc(lastError?.message || "Unknown error")}<br><small>Check that journals.json is committed under <code>data/journals.json</code>.</small></div>`;
-    return false;
+
+    try {
+
+      setStatus("Loading database…");
+
+      const response = await fetch(
+        `./data/journals.json?v=${Date.now()}`,
+        {
+          cache: "no-store"
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(
+          `Database HTTP ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+
+      if (Array.isArray(data)) {
+
+        DB = {
+          version: "1.0",
+          record_count: data.length,
+          records: data
+        };
+
+      } else {
+
+        DB = {
+          version: data.version ?? "1.0",
+          record_count:
+            data.record_count ??
+            data.records?.length ??
+            0,
+          records:
+            Array.isArray(data.records)
+              ? data.records
+              : []
+        };
+      }
+
+      if (!DB.records.length) {
+        throw new Error(
+          "journals.json contains no journal records."
+        );
+      }
+
+      buildIndexes();
+
+      databaseLoaded = true;
+
+      setStatus("Ready");
+
+      if ($("recordCount")) {
+        $("recordCount").textContent =
+          Number(DB.record_count).toLocaleString();
+      }
+
+      if ($("datasetVersion")) {
+        $("datasetVersion").textContent =
+          DB.version;
+      }
+
+      if ($("dbStatus")) {
+        $("dbStatus").textContent = "Ready";
+      }
+
+      if ($("dbDot")) {
+        $("dbDot").style.background =
+          "#20a66f";
+      }
+
+      return true;
+
+    } catch (error) {
+
+      console.error(
+        "JournalCheck database error:",
+        error
+      );
+
+      databaseLoaded = false;
+
+      if ($("dbStatus")) {
+        $("dbStatus").textContent =
+          "Database error";
+      }
+
+      if ($("recordCount")) {
+        $("recordCount").textContent = "—";
+      }
+
+      if ($("datasetVersion")) {
+        $("datasetVersion").textContent = "—";
+      }
+
+      if ($("dbDot")) {
+        $("dbDot").style.background =
+          "#c53b42";
+      }
+
+      showMessage(
+        "Database could not be loaded.",
+        `${error.message}. Check that journals.json exists at data/journals.json.`
+      );
+
+      return false;
+    }
   }
 
-  function record(r) {
+  /* ==========================================================
+     SEARCH INDEX
+     ========================================================== */
+
+  function buildIndexes() {
+
+    titleIndex = [];
+
+    issnIndex = new Map();
+
+    DB.records.forEach(record => {
+
+      const title =
+        clean(value(record, "title"));
+
+      const issn =
+        digits(value(record, "issn"));
+
+      const eissn =
+        digits(value(record, "eissn"));
+
+      titleIndex.push({
+        record,
+        title
+      });
+
+      if (issn) {
+        issnIndex.set(issn, record);
+      }
+
+      if (eissn) {
+        issnIndex.set(eissn, record);
+      }
+    });
+  }
+
+  /* ==========================================================
+     SEARCH SCORING
+     ========================================================== */
+
+  function tokenSimilarity(a, b) {
+
+    if (!a || !b) return 0;
+
+    if (a === b) return 1;
+
+    const A =
+      new Set(a.split(" ").filter(Boolean));
+
+    const B =
+      new Set(b.split(" ").filter(Boolean));
+
+    let matches = 0;
+
+    A.forEach(token => {
+
+      if (B.has(token)) {
+        matches++;
+      }
+    });
+
+    return (
+      matches /
+      Math.max(A.size, B.size)
+    );
+  }
+
+  function compactTitle(value) {
+
+    return clean(value)
+      .replace(
+        /\b(the|journal|of|and|in|for|a|an|on|to|from)\b/g,
+        " "
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  function findMatches(query) {
+
+    const raw = String(query || "").trim();
+
+    const normalized =
+      clean(raw);
+
+    const queryISSN =
+      digits(raw);
+
+    if (!normalized && !queryISSN) {
+      return [];
+    }
+
+    /* Exact ISSN match */
+
+    if (queryISSN.length >= 7) {
+
+      const exact =
+        issnIndex.get(queryISSN);
+
+      if (exact) {
+        return [exact];
+      }
+    }
+
+    const compactQuery =
+      compactTitle(raw);
+
+    const scored = [];
+
+    for (const item of titleIndex) {
+
+      const record = item.record;
+
+      const title =
+        item.title;
+
+      const compact =
+        compactTitle(
+          value(record, "title")
+        );
+
+      let score = 0;
+
+      if (title === normalized) {
+        score += 200;
+      }
+
+      if (
+        normalized.length > 3 &&
+        title.includes(normalized)
+      ) {
+        score += 100;
+      }
+
+      if (
+        title.length > 3 &&
+        normalized.includes(title)
+      ) {
+        score += 50;
+      }
+
+      if (
+        compactQuery &&
+        compact === compactQuery
+      ) {
+        score += 150;
+      }
+
+      if (
+        compactQuery.length > 3 &&
+        compact.includes(compactQuery)
+      ) {
+        score += 70;
+      }
+
+      score +=
+        tokenSimilarity(
+          title,
+          normalized
+        ) * 60;
+
+      const publisher =
+        clean(
+          value(record, "publisher")
+        );
+
+      if (
+        publisher &&
+        publisher === normalized
+      ) {
+        score += 15;
+      }
+
+      if (score >= 30) {
+        scored.push({
+          record,
+          score
+        });
+      }
+    }
+
+    scored.sort(
+      (a, b) =>
+        b.score - a.score
+    );
+
+    return scored
+      .slice(0, 20)
+      .map(x => x.record);
+  }
+
+  /* ==========================================================
+     NORMALIZE RECORD
+     ========================================================== */
+
+  function normalizeRecord(record) {
+
     return {
-      raw:r,title:val(r,"title"),issn:val(r,"issn"),eissn:val(r,"eissn"),publisher:val(r,"publisher"),
-      country:val(r,"country"),language:val(r,"language"),scie:val(r,"scie"),ssci:val(r,"ssci"),ahci:val(r,"ahci"),esci:val(r,"esci"),
-      jcr:val(r,"jcr"),scopus:val(r,"scopus"),scopusActive:val(r,"scopusActive"),scopusId:val(r,"scopusId"),
-      scopusCoverage:val(r,"scopusCoverage"),scopusType:val(r,"scopusType"),scopusOA:val(r,"scopusOA"),citescore:val(r,"citescore"),snip:val(r,"snip"),
-      sjr:val(r,"sjr"),quartile:val(r,"quartile"),hindex:val(r,"hindex"),subject:val(r,"subject"),
-      doaj:val(r,"doaj"),openalex:val(r,"openalex"),crossref:val(r,"crossref"),cope:val(r,"cope"),
-      peerReview:val(r,"peerReview"),editorialBoard:val(r,"editorialBoard"),apc:val(r,"apc"),license:val(r,"license"),
-      copyright:val(r,"copyright"),ethics:val(r,"ethics"),retraction:val(r,"retraction"),archiving:val(r,"archiving"),
-      doi:val(r,"doi"),website:val(r,"website") || val(r,"official"),warning:val(r,"warning")
+
+      raw: record,
+
+      title:
+        value(record, "title"),
+
+      issn:
+        value(record, "issn"),
+
+      eissn:
+        value(record, "eissn"),
+
+      publisher:
+        value(record, "publisher"),
+
+      country:
+        value(record, "country"),
+
+      language:
+        value(record, "language"),
+
+      scie:
+        value(record, "scie"),
+
+      ssci:
+        value(record, "ssci"),
+
+      ahci:
+        value(record, "ahci"),
+
+      esci:
+        value(record, "esci"),
+
+      jcr:
+        value(record, "jcr"),
+
+      scopus:
+        value(record, "scopus"),
+
+      scopusActive:
+        value(record, "scopusActive"),
+
+      scopusId:
+        value(record, "scopusId"),
+
+      scopusCoverage:
+        value(record, "scopusCoverage"),
+
+      scopusType:
+        value(record, "scopusType"),
+
+      scopusOA:
+        value(record, "scopusOA"),
+
+      citeScore:
+        value(record, "citeScore"),
+
+      snip:
+        value(record, "snip"),
+
+      sjr:
+        value(record, "sjr"),
+
+      quartile:
+        value(record, "quartile"),
+
+      hindex:
+        value(record, "hindex"),
+
+      subject:
+        value(record, "subject"),
+
+      doaj:
+        value(record, "doaj"),
+
+      openalex:
+        value(record, "openalex"),
+
+      crossref:
+        value(record, "crossref"),
+
+      cope:
+        value(record, "cope"),
+
+      peerReview:
+        value(record, "peerReview"),
+
+      editorialBoard:
+        value(record, "editorialBoard"),
+
+      apc:
+        value(record, "apc"),
+
+      license:
+        value(record, "license"),
+
+      copyright:
+        value(record, "copyright"),
+
+      ethics:
+        value(record, "ethics"),
+
+      retraction:
+        value(record, "retraction"),
+
+      archiving:
+        value(record, "archiving"),
+
+      doi:
+        value(record, "doi"),
+
+      website:
+        value(record, "website"),
+
+      warning:
+        value(record, "warning")
     };
   }
 
-  function scoreConcern(j, ext={}) {
-    const signals=[];
-    const add=(points,title,detail)=>signals.push({points,title,detail});
+  /* ==========================================================
+     EXTERNAL VERIFICATION
+     
+     IMPORTANT:
+     These are optional enrichment checks.
+     They can NEVER prevent local results from appearing.
+     ========================================================== */
 
-    // Important design rule: absence from a database is NOT a predatory-journal signal.
-    // We only score explicit contradictions or independently evidenced warning signals.
-    if (ext.crossref?.titleMismatch) add(30,"Crossref identity mismatch","Crossref returned a substantially different title for the same ISSN. Check the ISSN/title relationship before relying on the record.");
-    if (ext.openalex?.issnMismatch) add(30,"OpenAlex identifier mismatch","OpenAlex returned a source whose ISSN identifiers do not align cleanly with this journal record.");
-    if (ext.identityConflict) add(25,"Source identity conflict","Independent sources disagree materially about the journal identity, publisher, or identifiers.");
-    if (ext.retractions?.count > 0) add(8,"Retraction/update evidence","Crossref/Retraction Watch metadata indicates at least one retraction-related update associated with this journal. This is a review signal, not proof of misconduct.");
-    if (j.warning) {
-      const arr=Array.isArray(j.warning)?j.warning:[j.warning];
-      arr.forEach(x=>add(15,"Recorded warning signal",String(x)));
+  async function externalChecks(journal) {
+
+    const result = {
+
+      openalex: null,
+
+      crossref: null,
+
+      doaj: null,
+
+      retractions: null
+    };
+
+    const identifiers = [
+      journal.issn,
+      journal.eissn
+    ]
+      .filter(Boolean)
+      .map(x => norm(x))
+      .filter(Boolean);
+
+    if (!identifiers.length) {
+      return result;
     }
 
-    // Transparency is reported separately. Missing transparency data is NOT scored as misconduct.
-    const score=Math.min(100,signals.reduce((a,s)=>a+s.points,0));
-    let band="low"; if(score>=75) band="extreme"; else if(score>=50) band="high"; else if(score>=25) band="moderate";
-    return {score,band,signals};
-  }
+    /* -------------------------
+       OpenAlex
+       ------------------------- */
 
-  function criteria(j, ext) {
-    const items=[
-      ["Journal title", j.title ? "yes":"unknown","Identity"],
-      ["ISSN", j.issn ? "yes":"unknown","Identity"],
-      ["eISSN", j.eissn ? "yes":"unknown","Identity"],
-      ["Publisher", j.publisher ? "yes":"unknown","Identity"],
-      ["Country", j.country ? "yes":"unknown","Identity"],
-      ["Language", j.language ? "yes":"unknown","Identity"],
-      ["SCIE", boolState(j.scie),"Indexing"], ["SSCI", boolState(j.ssci),"Indexing"],
-      ["AHCI", boolState(j.ahci),"Indexing"], ["ESCI", boolState(j.esci),"Indexing"],
-      ["Scopus", boolState(j.scopus),"Indexing"], ["Scopus active", boolState(j.scopusActive),"Indexing"],
-      ["JCR", boolState(j.jcr),"Indexing"],
-      ["DOAJ", ext.doaj?.found===true ? "yes":(ext.doaj?.found===false?"no":"unknown"),"External"],
-      ["OpenAlex", ext.openalex?.found===true ? "yes":(ext.openalex?.found===false?"no":"unknown"),"External"],
-      ["Crossref", ext.crossref?.found===true ? "yes":(ext.crossref?.found===false?"no":"unknown"),"External"],
-      ["Retraction Watch / Crossref", ext.retractions?.count!=null ? "yes":"unknown","Integrity checks"],
-      ["SJR", j.sjr ? "yes":"unknown","Metrics"], ["Quartile", j.quartile ? "yes":"unknown","Metrics"],
-      ["CiteScore", j.citescore ? "yes":"unknown","Metrics"], ["SNIP", j.snip ? "yes":"unknown","Metrics"],
-      ["H-index", j.hindex ? "yes":"unknown","Metrics"],
-      ["Peer-review policy", j.peerReview ? "yes":"unknown","Transparency"],
-      ["Editorial board", j.editorialBoard ? "yes":"unknown","Transparency"],
-      ["Fees/APC", j.apc ? "yes":"unknown","Transparency"], ["Licensing", j.license ? "yes":"unknown","Transparency"],
-      ["Copyright", j.copyright ? "yes":"unknown","Transparency"], ["Publication ethics", j.ethics ? "yes":"unknown","Transparency"],
-      ["Retraction/correction policy", j.retraction ? "yes":"unknown","Transparency"],
-      ["Digital preservation", j.archiving ? "yes":"unknown","Transparency"],
-      ["Persistent identifier/DOI", j.doi ? "yes":"unknown","Transparency"]
-    ];
-    return items;
-  }
+    const openAlexJob = (async () => {
 
-  async function externalChecks(j) {
-    const out={openalex:null,crossref:null,doaj:null,retractions:null,identityConflict:false};
-    const rawIssns=[j.issn,j.eissn].filter(Boolean).map(norm);
-    const normalizedIssns=rawIssns.map(x=>digits(x)).filter(Boolean);
-    const issn=rawIssns[0];
-    if (!issn) return out;
+      for (const issn of identifiers) {
 
-    // Run independent sources in parallel so one slow/blocked service cannot keep the
-    // entire search screen stuck on "Searching…".
-    const jobs = [
-      (async()=>{
         try {
-          // OpenAlex resolves ISSNs directly. Keep the canonical ISSN formatting first;
-          // fall back to the compact form only if necessary.
-          const candidates=[issn, ...rawIssns.slice(1)].filter(Boolean);
-          let source=null, lastErr=null;
-          for(const candidate of candidates){
-            try {
-              const data=await fetchJSON(`https://api.openalex.org/sources/issn:${encodeURIComponent(candidate)}`,6000);
-              source=Array.isArray(data.results)?data.results[0]:data;
-              if(source?.id) break;
-            } catch(e){ lastErr=e; }
-          }
-          if(source?.id){
-            const ids=[source.issn_l,...(source.issn||[])].filter(Boolean).map(digits);
-            out.openalex={
-              found:true,id:source.id,displayName:source.display_name||"",
-              issns:ids,works:source.works_count??null,citations:source.cited_by_count??null,
-              homepage:source.homepage_url||"",country:source.country_code||"",
-              publisher:source.host_organization_name||"",
-              isOA:source.is_oa===true,isInDOAJ:source.is_in_doaj===true,
-              apcUsd:source.apc_usd??null,hIndex:source.summary_stats?.h_index??null,
-              twoYearCitedness:source.summary_stats?.["2yr_mean_citedness"]??null,
-              type:source.type||"",issnMismatch:!ids.some(x=>normalizedIssns.includes(x))
+
+          /*
+             IMPORTANT:
+             Use the filter endpoint rather than
+             /sources/issn:XXXX which can return 404.
+          */
+
+          const url =
+            `https://api.openalex.org/sources?filter=issn:${encodeURIComponent(
+              issn
+            )}&per-page=1`;
+
+          const data =
+            await fetchJSON(
+              url,
+              5000
+            );
+
+          const source =
+            data?.results?.[0];
+
+          if (source?.id) {
+
+            const sourceISSNs = [
+              source.issn_l,
+              ...(source.issn || [])
+            ]
+              .filter(Boolean)
+              .map(digits);
+
+            result.openalex = {
+
+              found: true,
+
+              id: source.id,
+
+              displayName:
+                source.display_name || "",
+
+              issns:
+                sourceISSNs,
+
+              works:
+                source.works_count ?? null,
+
+              citations:
+                source.cited_by_count ?? null,
+
+              homepage:
+                source.homepage_url || "",
+
+              publisher:
+                source.host_organization_name || "",
+
+              country:
+                source.country_code || "",
+
+              isOA:
+                source.is_oa === true,
+
+              isInDOAJ:
+                source.is_in_doaj === true,
+
+              hIndex:
+                source.summary_stats?.h_index ??
+                null,
+
+              citedness:
+                source.summary_stats?.[
+                  "2yr_mean_citedness"
+                ] ?? null,
+
+              type:
+                source.type || "",
+
+              issnMismatch:
+                !sourceISSNs.some(
+                  x =>
+                    identifiers
+                      .map(digits)
+                      .includes(x)
+                )
             };
-          } else out.openalex={found:false,error:lastErr?.message||"OpenAlex source not found"};
-        } catch(e){out.openalex={found:null,error:e.message};}
-      })(),
-      (async()=>{
-        try {
-          const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}`,6000);
-          const m=data.message||{}; const titles=(m.title||[]).join(" ");
-          const crossIssns=(m.ISSN||[]).map(digits);
-          out.crossref={found:!!m.title,title:titles,issn:m.ISSN||[],publisher:m.publisher||"",
-            works:m.counts?.["total-dois"] ?? m.count ?? null,
-            titleMismatch:!!titles && !!j.title && similarity(cleanTitle(titles),cleanTitle(j.title))<0.55,
-            issnMismatch:crossIssns.length>0 && !normalizedIssns.some(x=>crossIssns.includes(x))};
-        } catch(e){out.crossref={found:null,error:e.message};}
-      })(),
-      (async()=>{
-        try {
-          const data=await fetchJSON(`https://doaj.org/api/search/journals/issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,6000);
-          const total=Number(data.total||0); out.doaj={found:total>0,total,record:data.results?.[0]?.bibjson||null};
-        } catch(e){
-          try {
-            const data=await fetchJSON(`https://doaj.org/api/search/journal.issn:${encodeURIComponent(issn)}?page=1&pageSize=1`,6000);
-            const total=Number(data.total||0); out.doaj={found:total>0,total,record:data.results?.[0]?.bibjson||null};
-          } catch(e2){out.doaj={found:null,error:e2.message||e.message};}
+
+            return;
+          }
+
+        } catch (error) {
+
+          console.warn(
+            "OpenAlex check failed:",
+            error.message
+          );
         }
-      })(),
-      (async()=>{
-        try {
-          const data=await fetchJSON(`https://api.crossref.org/journals/${encodeURIComponent(issn)}/works?filter=update-type:retraction&rows=0`,6000);
-          const total=Number(data.message?.total-results ?? data.message?.total_results ?? 0);
-          out.retractions={count:total,source:"Crossref / Retraction Watch"};
-        } catch(e){out.retractions={count:null,error:e.message};}
-      })()
-    ];
-    await Promise.allSettled(jobs);
-
-    out.identityConflict=Boolean(
-      out.crossref?.found===true && out.crossref?.issnMismatch ||
-      out.openalex?.found===true && out.openalex?.issnMismatch ||
-      (out.crossref?.publisher && out.openalex?.publisher && similarity(cleanTitle(out.crossref.publisher),cleanTitle(out.openalex.publisher))<0.20)
-    );
-    return out;
-  }
-
-  function similarity(a,b){
-    if(!a||!b)return 0;if(a===b)return 1;
-    const A=new Set(a.split(" ")),B=new Set(b.split(" ")); let inter=0; A.forEach(x=>{if(B.has(x))inter++});
-    return inter/Math.max(A.size,B.size);
-  }
-
-  function findMatches(q) {
-    const raw=norm(q), n=cleanTitle(raw), d=digits(raw);
-    const arr=DB.records.map(record);
-    if (d.length>=7) {
-      const exact=arr.filter(r=>digits(r.issn)===d || digits(r.eissn)===d);
-      if(exact.length)return exact.slice(0,20);
-    }
-    const scored=arr.map(r=>{
-      const t=cleanTitle(r.title), ct=compactTitle(r.title);
-      let score=0;
-      if(t===n)score+=100;
-      if(t.includes(n)&&n.length>4)score+=70;
-      if(ct===compactTitle(raw))score+=85;
-      if(ct.includes(compactTitle(raw))&&compactTitle(raw).length>4)score+=50;
-      score+=similarity(t,n)*45;
-      if(r.publisher && cleanTitle(r.publisher)===n)score+=10;
-      return {r,score};
-    }).filter(x=>x.score>=28).sort((a,b)=>b.score-a.score);
-    return scored.slice(0,20).map(x=>x.r);
-  }
-
-  function render(j, ext, matches, query) {
-    const risk=scoreConcern(j,ext);
-    const c=criteria(j,ext);
-    const confirmed=c.filter(x=>x[1]==="yes").length, unavailable=c.filter(x=>x[1]==="unknown").length, negative=c.filter(x=>x[1]==="no").length;
-    const bandLabel={low:"LOW CONCERN",moderate:"MODERATE CONCERN",high:"HIGH CONCERN",extreme:"EXTREME CONCERN"}[risk.band];
-    const signals=risk.signals.length?risk.signals.map(s=>`<div class="signal"><strong>+${s.points} ${esc(s.title)}</strong><p>${esc(s.detail)}</p></div>`).join(""):`<div class="notice"><strong>No major concern signal was triggered by the available evidence.</strong><br>Missing data is not treated as misconduct. A low score is not a certification of quality.</div>`;
-
-    const idx=[
-      ["SCIE",j.scie], ["SSCI",j.ssci], ["AHCI",j.ahci], ["ESCI",j.esci], ["JCR 2025",j.jcr],
-      ["Scopus",j.scopus], ["Scopus Active",j.scopusActive]
-    ].map(([k,v])=>`<tr><td><strong>${k}</strong></td><td>${status(v)}</td><td>${k==="Scopus" ? textOrNA(j.scopusCoverage) : k==="Scopus Active" ? textOrNA(j.scopusType) : "—"}</td></tr>`).join("");
-
-    const extStatus=(state,yes="✓ Confirmed",no="× No")=>state==="yes"?`<span class="status yes">${yes}</span>`:state==="no"?`<span class="status no">${no}</span>`:`<span class="status unknown">— Unknown</span>`;
-    const doajBib=ext.doaj?.record||{};
-    const oa=ext.openalex;
-    const cr=ext.crossref;
-    const rw=ext.retractions;
-
-    const externalRows=[
-      ["DOAJ",ext.doaj?.found===true?"yes":ext.doaj?.found===false?"no":"unknown",doajBib.title||"Official DOAJ lookup"],
-      ["OpenAlex",oa?.found===true?"yes":oa?.found===false?"no":"unknown",oa?.displayName||"Official OpenAlex lookup"],
-      ["Crossref",cr?.found===true?"yes":cr?.found===false?"no":"unknown",cr?.title||"Official Crossref lookup"],
-      ["Retraction Watch / Crossref",rw?.count!=null?"yes":"unknown",rw?.count!=null?`${rw.count.toLocaleString()} retraction-related update record(s)`:(rw?.error||"Live check unavailable")],
-      ["Scopus source ID",j.scopusId?"yes":"unknown",j.scopusId||"Not available"],
-      ["Scopus OA",j.scopusOA?"yes":"unknown",j.scopusOA||"Not available"]
-    ].map(([k,state,d])=>`<tr><td><strong>${k}</strong></td><td>${extStatus(state)}</td><td>${esc(d)}</td></tr>`).join("");
-
-    const metricCards=[
-      ["SCImago SJR",j.sjr], ["SJR year",j.sjr?(j.sjr_year||"2025"):"Not locally verified"], ["Quartile",j.quartile],
-      ["CiteScore",j.citescore], ["SNIP",j.snip], ["H-index",j.hindex], ["Subject area",j.subject],
-      ["OpenAlex works",oa?.works], ["OpenAlex citations",oa?.citations], ["OpenAlex h-index",oa?.hIndex],
-      ["OpenAlex APC (USD)",oa?.apcUsd], ["OpenAlex OA",oa?.isOA===true?"Yes":oa?.isOA===false?"No":null],
-      ["OpenAlex DOAJ flag",oa?.isInDOAJ===true?"Yes":oa?.isInDOAJ===false?"No":null]
-    ].map(([k,v])=>`<div class="metric"><small>${k}</small><strong>${textOrNA(v)}</strong></div>`).join("");
-
-    const trans=[
-      ["Peer-review policy",j.peerReview], ["Editorial board",j.editorialBoard], ["Fees / APC",j.apc], ["Licensing",j.license],
-      ["Copyright",j.copyright], ["Publication ethics",j.ethics], ["Retraction / correction",j.retraction], ["Digital preservation",j.archiving]
-    ].map(([k,v])=>`<tr><td><strong>${k}</strong></td><td>${v?`<span class="status yes">✓ Recorded</span>`:`<span class="status unknown">— Not available</span>`}</td><td>${textOrNA(v)}</td></tr>`).join("");
-
-    const criteriaHtml=c.map(([name,state,group])=>`<div class="criterion"><div><div class="criterion-name">${esc(name)}</div><div class="why">${esc(group)}</div></div>${state==="yes"?'<span class="status yes">✓ Included</span>':state==="no"?'<span class="status no">× No</span>':'<span class="status unknown">— Unknown</span>'}</div>`).join("");
-
-    const issn=digits(j.issn||j.eissn);
-    const titleQ=encodeURIComponent(`"${j.title||query}" ${j.issn||j.eissn||""}`);
-    const googleBase=`https://www.google.com/search?q=${titleQ}`;
-    const googlePred=`https://www.google.com/search?q=${encodeURIComponent(`"${j.title||query}" ${j.issn||j.eissn||""} (predatory OR hijacked OR scam OR fake OR warning)`)}`;
-    const googleIndex=`https://www.google.com/search?q=${encodeURIComponent(`"${j.title||query}" ${j.issn||j.eissn||""} (Scopus OR Web of Science OR DOAJ OR SCImago)`)}`;
-    const googleRetraction=`https://www.google.com/search?q=${encodeURIComponent(`"${j.title||query}" ${j.issn||j.eissn||""} (retraction OR "expression of concern")`)}`;
-    const officialSite= j.website || oa?.homepage || "";
-    const doajUrl=`https://doaj.org/toc/${encodeURIComponent(j.eissn||j.issn||"")}`;
-    const openalexUrl=oa?.id||`https://openalex.org/sources?search=${encodeURIComponent(j.title||query)}`;
-    const crossrefUrl=`https://search.crossref.org/?q=${encodeURIComponent(j.issn||j.eissn||j.title||query)}`;
-    const issnUrl=`https://portal.issn.org/resource/ISSN/${encodeURIComponent(j.eissn||j.issn||"")}`;
-    const scimagoUrl=`https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(issn)}&tip=issn`;
-    const scopusUrl=`https://www.scopus.com/sources`;
-    const tcsUrl=`https://thinkchecksubmit.org/journals/`;
-
-    let resultsBox=$("resultsBox");
-    if(!resultsBox){
-      const resultsSection=$("results");
-      if(resultsSection){
-        resultsBox=document.createElement("div");
-        resultsBox.id="resultsBox";
-        resultsBox.className="journal-card hide";
-        resultsSection.appendChild(resultsBox);
       }
+
+      result.openalex = {
+        found: null,
+        error:
+          "OpenAlex could not be reached or no matching source was returned."
+      };
+
+    })();
+
+    /* -------------------------
+       Crossref
+       ------------------------- */
+
+    const crossrefJob = (async () => {
+
+      for (const issn of identifiers) {
+
+        try {
+
+          const data =
+            await fetchJSON(
+              `https://api.crossref.org/journals/${encodeURIComponent(
+                issn
+              )}`,
+              5000
+            );
+
+          const message =
+            data?.message;
+
+          if (message?.title) {
+
+            const crossISSNs =
+              (message.ISSN || [])
+                .map(digits);
+
+            const title =
+              Array.isArray(message.title)
+                ? message.title.join(" ")
+                : message.title;
+
+            result.crossref = {
+
+              found: true,
+
+              title,
+
+              issn:
+                message.ISSN || [],
+
+              publisher:
+                message.publisher || "",
+
+              works:
+                message.counts?.[
+                  "total-dois"
+                ] ??
+                message.count ??
+                null,
+
+              titleMismatch:
+                !!journal.title &&
+                tokenSimilarity(
+                  clean(title),
+                  clean(journal.title)
+                ) < 0.55,
+
+              issnMismatch:
+                crossISSNs.length > 0 &&
+                !identifiers
+                  .map(digits)
+                  .some(x =>
+                    crossISSNs.includes(x)
+                  )
+            };
+
+            return;
+          }
+
+        } catch (error) {
+
+          console.warn(
+            "Crossref check failed:",
+            error.message
+          );
+        }
+      }
+
+      result.crossref = {
+        found: null,
+        error:
+          "Crossref could not be reached or no journal record was returned."
+      };
+
+    })();
+
+    /* -------------------------
+       DOAJ
+       -------------------------
+
+       DOAJ API availability can vary by browser/CORS.
+       We therefore do not let it block anything.
+       ------------------------- */
+
+    const doajJob = (async () => {
+
+      for (const issn of identifiers) {
+
+        try {
+
+          const url =
+            `https://doaj.org/api/search/journals/issn:${encodeURIComponent(
+              issn
+            )}?page=1&pageSize=1`;
+
+          const data =
+            await fetchJSON(
+              url,
+              5000
+            );
+
+          const total =
+            Number(data?.total || 0);
+
+          result.doaj = {
+
+            found:
+              total > 0,
+
+            total,
+
+            record:
+              data?.results?.[0]?.bibjson ||
+              null
+          };
+
+          return;
+
+        } catch (error) {
+
+          console.warn(
+            "DOAJ check unavailable:",
+            error.message
+          );
+        }
+      }
+
+      result.doaj = {
+        found: null,
+        error:
+          "DOAJ could not be queried directly from this browser."
+      };
+
+    })();
+
+    /* -------------------------
+       Crossref retraction metadata
+       ------------------------- */
+
+    const retractionJob = (async () => {
+
+      try {
+
+        const issn =
+          identifiers[0];
+
+        const data =
+          await fetchJSON(
+            `https://api.crossref.org/journals/${encodeURIComponent(
+              issn
+            )}/works?filter=update-type:retraction&rows=0`,
+            5000
+          );
+
+        result.retractions = {
+
+          count:
+            Number(
+              data?.message?.[
+                "total-results"
+              ] ??
+              data?.message?.total_results ??
+              0
+            ),
+
+          source:
+            "Crossref update metadata"
+        };
+
+      } catch (error) {
+
+        result.retractions = {
+
+          count: null,
+
+          error:
+            "Retraction metadata unavailable."
+        };
+      }
+
+    })();
+
+    /*
+       Wait for all checks, but NEVER throw.
+    */
+
+    await Promise.allSettled([
+      openAlexJob,
+      crossrefJob,
+      doajJob,
+      retractionJob
+    ]);
+
+    return result;
+  }
+
+  /* ==========================================================
+     CONCERN SCREENING
+     ========================================================== */
+
+  function calculateRisk(journal, external) {
+
+    const signals = [];
+
+    const add =
+      (points, title, detail) => {
+
+        signals.push({
+          points,
+          title,
+          detail
+        });
+      };
+
+    /*
+       IMPORTANT:
+       We deliberately DO NOT assign concern points merely
+       because SCOPUS / WoS / DOAJ information is missing.
+    */
+
+    if (
+      external.crossref?.titleMismatch
+    ) {
+
+      add(
+        30,
+        "Crossref identity mismatch",
+        "The journal title returned by Crossref does not align sufficiently with the local journal record. Verify the ISSN/title relationship."
+      );
     }
-    if(!resultsBox) throw new Error("Results container is missing from the page");
-    const googleBtn=$("googleBtn");
-    if(googleBtn) googleBtn.href=googlePred;
-    resultsBox.innerHTML=`
-      <div class="journal-top">
-        <div>
-          <div class="label">Best verified match</div>
-          <h3 class="journal-name">${esc(j.title||"Untitled journal")}</h3>
-          <div class="publisher">${textOrNA(j.publisher)}</div>
-          <div class="identifiers">${j.issn?`<span class="idchip">ISSN ${esc(j.issn)}</span>`:""}${j.eissn?`<span class="idchip">eISSN ${esc(j.eissn)}</span>`:""}${j.country?`<span class="idchip">${esc(j.country)}</span>`:""}${j.language?`<span class="idchip">${esc(j.language)}</span>`:""}</div>
-        </div>
-        <div class="concern"><div class="score">${risk.score}<span style="font-size:20px">/100</span></div><div class="band ${risk.band}">${bandLabel}</div><div style="font-size:11px;color:var(--muted);margin-top:8px">Evidence-led concern screening</div></div>
-      </div>
 
-      <div class="section"><h3>1. Journal identity</h3><div class="grid">
-        <div class="metric"><small>Title</small><strong>${textOrNA(j.title)}</strong></div>
-        <div class="metric"><small>Publisher</small><strong>${textOrNA(j.publisher)}</strong></div>
-        <div class="metric"><small>ISSN</small><strong>${textOrNA(j.issn)}</strong></div>
-        <div class="metric"><small>eISSN</small><strong>${textOrNA(j.eissn)}</strong></div>
-        <div class="metric"><small>Country</small><strong>${textOrNA(j.country || oa?.country)}</strong></div>
-        <div class="metric"><small>Language</small><strong>${textOrNA(j.language)}</strong></div>
-        <div class="metric"><small>Website</small><strong>${officialSite?`<a href="${esc(officialSite)}" target="_blank" rel="noopener">Open official / publisher site ↗</a>`:"Not available"}</strong></div>
-        <div class="metric"><small>DOI / identifier</small><strong>${textOrNA(j.doi)}</strong></div>
-      </div></div>
+    if (
+      external.openalex?.issnMismatch
+    ) {
 
-      <div class="section"><h3>2. Indexing profile</h3><table class="table"><thead><tr><th>Database</th><th>Status</th><th>Additional information</th></tr></thead><tbody>${idx}</tbody></table></div>
+      add(
+        30,
+        "OpenAlex identifier mismatch",
+        "OpenAlex returned identifiers that do not align cleanly with the searched journal."
+      );
+    }
 
-      <div class="section"><h3>3. Journal quality & metrics</h3><div class="grid">${metricCards}</div>
-        <div class="notice" style="margin-top:14px"><strong>Metric rule:</strong> SJR and quartiles are shown only when a verifiable SCImago value is present. JournalCheck never converts CiteScore into SJR or invents a quartile. OpenAlex metrics are clearly labelled as OpenAlex and are not substituted for SCImago.</div>
-      </div>
+    if (
+      external.retractions?.count > 0
+    ) {
 
-      <div class="section"><h3>4. Live external confirmations</h3><table class="table"><thead><tr><th>Source</th><th>Result</th><th>Evidence / response</th></tr></thead><tbody>${externalRows}</tbody></table>
-        <div class="notice" style="margin-top:14px"><strong>Why some fields may still say Unknown:</strong> JournalCheck is a static GitHub Pages app. Crossref and OpenAlex can be queried directly from the browser; DOAJ may be blocked by browser CORS in some environments. Unknown means the check could not be completed — it is never converted into “No”.</div>
-        <div class="external" style="margin-top:14px">
-          ${officialSite?`<a target="_blank" rel="noopener" href="${esc(officialSite)}">Official journal ↗</a>`:""}
-          <a target="_blank" rel="noopener" href="${issnUrl}">ISSN Portal ↗</a>
-          <a target="_blank" rel="noopener" href="${doajUrl}">DOAJ record ↗</a>
-          <a target="_blank" rel="noopener" href="${openalexUrl}">OpenAlex record ↗</a>
-          <a target="_blank" rel="noopener" href="${crossrefUrl}">Crossref record ↗</a>
-          <a target="_blank" rel="noopener" href="${scopusUrl}">Scopus Sources ↗</a>
-          <a target="_blank" rel="noopener" href="${scimagoUrl}">SCImago by ISSN ↗</a>
-          <a target="_blank" rel="noopener" href="${tcsUrl}">Think.Check.Submit ↗</a>
-        </div>
-      </div>
+      add(
+        8,
+        "Retraction-related metadata signal",
+        `${external.retractions.count} retraction-related Crossref update record(s) were found. This is a screening signal and is not proof of misconduct.`
+      );
+    }
 
-      <div class="section"><h3>5. Web & Google investigation</h3>
-        <p style="color:var(--muted);margin-top:-4px">Google is used here as a discovery and investigation layer, not as proof of indexing or misconduct. Review the official result before treating a claim as confirmed.</p>
-        <div class="external">
-          <a target="_blank" rel="noopener" href="${googleIndex}">Search indexing claims ↗</a>
-          <a target="_blank" rel="noopener" href="${googlePred}">Search predatory / hijacked warnings ↗</a>
-          <a target="_blank" rel="noopener" href="${googleRetraction}">Search retractions / concerns ↗</a>
-          <a target="_blank" rel="noopener" href="${googleBase}">General journal search ↗</a>
-        </div>
-        <div class="notice" style="margin-top:14px"><strong>Automated Google fetching is deliberately not enabled.</strong> Google's current Custom Search JSON API requires a configured search engine and API key, and Google says the API is closed to new customers. JournalCheck therefore provides targeted Google investigation links rather than scraping Google results or treating search snippets as evidence.</div>
-      </div>
+    if (has(journal.warning)) {
 
-      <div class="section"><h3>6. Concern screening</h3><p style="color:var(--muted);margin-top:-6px">The score represents detected warning signals only. <strong>Index absence and missing metadata do not increase the concern score.</strong></p>${signals}</div>
+      const warnings =
+        Array.isArray(journal.warning)
+          ? journal.warning
+          : [journal.warning];
 
-      <div class="section"><h3>7. Publication transparency</h3><table class="table"><thead><tr><th>Criterion</th><th>Status</th><th>Recorded information</th></tr></thead><tbody>${trans}</tbody></table></div>
+      warnings.forEach(warning => {
 
-      <div class="section"><h3>8. Complete verification checklist</h3>
-        <div class="criteria">${criteriaHtml}</div>
-        <div class="notice" style="margin-top:15px"><strong>${confirmed} confirmed</strong> · <strong>${negative} explicit negative</strong> · <strong>${unavailable} not available</strong> across the checks performed. Unknown is deliberately separated from No.</div>
-      </div>
+        add(
+          15,
+          "Recorded warning signal",
+          String(warning)
+        );
+      });
+    }
 
-      <div class="section"><h3>Researcher decision note</h3>
-        <div class="notice"><strong>JournalCheck is a due-diligence aid, not a predatory-journal verdict.</strong><br>A low concern score does not certify a journal, and a high score does not by itself prove misconduct. Use the official records and the journal's own current policies before submitting.</div>
+    const score =
+      Math.min(
+        100,
+        signals.reduce(
+          (sum, signal) =>
+            sum + signal.points,
+          0
+        )
+      );
+
+    let band = "low";
+
+    if (score >= 75) {
+      band = "extreme";
+    } else if (score >= 50) {
+      band = "high";
+    } else if (score >= 25) {
+      band = "moderate";
+    }
+
+    return {
+      score,
+      band,
+      signals
+    };
+  }
+
+  /* ==========================================================
+     CRITERIA
+     ========================================================== */
+
+  function criteria(journal, external) {
+
+    return [
+
+      /* Identity */
+
+      [
+        "Journal title",
+        has(journal.title)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      [
+        "ISSN",
+        has(journal.issn)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      [
+        "eISSN",
+        has(journal.eissn)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      [
+        "Publisher",
+        has(journal.publisher)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      [
+        "Country",
+        has(journal.country)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      [
+        "Language",
+        has(journal.language)
+          ? "yes"
+          : "unknown",
+        "Identity"
+      ],
+
+      /* Web of Science */
+
+      [
+        "SCIE",
+        boolState(journal.scie),
+        "Web of Science"
+      ],
+
+      [
+        "SSCI",
+        boolState(journal.ssci),
+        "Web of Science"
+      ],
+
+      [
+        "AHCI",
+        boolState(journal.ahci),
+        "Web of Science"
+      ],
+
+      [
+        "ESCI",
+        boolState(journal.esci),
+        "Web of Science"
+      ],
+
+      [
+        "JCR",
+        boolState(journal.jcr),
+        "Web of Science"
+      ],
+
+      /* Scopus */
+
+      [
+        "Scopus",
+        boolState(journal.scopus),
+        "Scopus"
+      ],
+
+      [
+        "Scopus Active",
+        boolState(journal.scopusActive),
+        "Scopus"
+      ],
+
+      /* External */
+
+      [
+        "DOAJ",
+        external.doaj?.found === true
+          ? "yes"
+          : external.doaj?.found === false
+            ? "no"
+            : "unknown",
+        "External verification"
+      ],
+
+      [
+        "OpenAlex",
+        external.openalex?.found === true
+          ? "yes"
+          : external.openalex?.found === false
+            ? "no"
+            : "unknown",
+        "External verification"
+      ],
+
+      [
+        "Crossref",
+        external.crossref?.found === true
+          ? "yes"
+          : external.crossref?.found === false
+            ? "no"
+            : "unknown",
+        "External verification"
+      ],
+
+      /* Metrics */
+
+      [
+        "SCImago SJR",
+        has(journal.sjr)
+          ? "yes"
+          : "unknown",
+        "Journal metrics"
+      ],
+
+      [
+        "SCImago quartile",
+        has(journal.quartile)
+          ? "yes"
+          : "unknown",
+        "Journal metrics"
+      ],
+
+      [
+        "CiteScore",
+        has(journal.citeScore)
+          ? "yes"
+          : "unknown",
+        "Journal metrics"
+      ],
+
+      [
+        "SNIP",
+        has(journal.snip)
+          ? "yes"
+          : "unknown",
+        "Journal metrics"
+      ],
+
+      [
+        "H-index",
+        has(journal.hindex)
+          ? "yes"
+          : "unknown",
+        "Journal metrics"
+      ],
+
+      /* Transparency */
+
+      [
+        "Peer-review policy",
+        has(journal.peerReview)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "Editorial board",
+        has(journal.editorialBoard)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "APC / fees",
+        has(journal.apc)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "License",
+        has(journal.license)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "Copyright policy",
+        has(journal.copyright)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "Publication ethics",
+        has(journal.ethics)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "Retraction/correction policy",
+        has(journal.retraction)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "Digital preservation",
+        has(journal.archiving)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ],
+
+      [
+        "DOI / persistent identifier",
+        has(journal.doi)
+          ? "yes"
+          : "unknown",
+        "Transparency"
+      ]
+    ];
+  }
+
+  /* ==========================================================
+     OFFICIAL / EXTERNAL LINKS
+     ========================================================== */
+
+  function externalLinks(journal, external, query) {
+
+    const title =
+      journal.title ||
+      query;
+
+    const identifier =
+      journal.issn ||
+      journal.eissn ||
+      "";
+
+    const encoded =
+      encodeURIComponent(
+        `${title} ${identifier}`
+      );
+
+    const google =
+      `https://www.google.com/search?q=${encoded}`;
+
+    const googlePredatory =
+      `https://www.google.com/search?q=${encodeURIComponent(
+        `"${title}" ${identifier} (predatory OR hijacked OR fake OR fraudulent OR scam OR warning)`
+      )}`;
+
+    const googleIndexing =
+      `https://www.google.com/search?q=${encodeURIComponent(
+        `"${title}" ${identifier} (Scopus OR "Web of Science" OR DOAJ OR SCImago)`
+      )}`;
+
+    const googleRetraction =
+      `https://www.google.com/search?q=${encodeURIComponent(
+        `"${title}" ${identifier} (retraction OR "expression of concern" OR correction)`
+      )}`;
+
+    const scimago =
+      `https://www.scimagojr.com/journalsearch.php?q=${encodeURIComponent(
+        digits(identifier)
+      )}&tip=issn`;
+
+    const scopus =
+      `https://www.scopus.com/sources`;
+
+    const doaj =
+      `https://doaj.org/search/journals?q=${encodeURIComponent(
+        identifier || title
+      )}`;
+
+    const openalex =
+      external.openalex?.id ||
+      `https://openalex.org/sources?search=${encodeURIComponent(
+        title
+      )}`;
+
+    const crossref =
+      `https://search.crossref.org/?q=${encodeURIComponent(
+        identifier || title
+      )}`;
+
+    const issn =
+      `https://portal.issn.org/resource/ISSN/${encodeURIComponent(
+        identifier
+      )}`;
+
+    return {
+
+      google,
+
+      googlePredatory,
+
+      googleIndexing,
+
+      googleRetraction,
+
+      scimago,
+
+      scopus,
+
+      doaj,
+
+      openalex,
+
+      crossref,
+
+      issn
+    };
+  }
+
+  /* ==========================================================
+     RENDER HELPERS
+     ========================================================== */
+
+  function setStatus(status) {
+
+    if ($("searchStatus")) {
+      $("searchStatus").textContent =
+        status;
+    }
+  }
+
+  function showMessage(title, detail) {
+
+    let box =
+      $("resultsBox") ||
+      $("emptyBox");
+
+    if (!box) {
+
+      box =
+        document.createElement("div");
+
+      box.id =
+        "journalcheckEmergency";
+
+      document.body.appendChild(box);
+    }
+
+    box.classList.remove("hide");
+
+    box.innerHTML = `
+      <div class="notice error">
+        <strong>${esc(title)}</strong>
+        <br>
+        ${esc(detail)}
       </div>
     `;
-    if($("resultHead")) $("resultHead").classList.remove("hide");
-    if(resultsBox) resultsBox.classList.remove("hide");
-    if($("emptyBox")) $("emptyBox").classList.add("hide");
-    if($("resultTitle")) $("resultTitle").textContent=`${matches.length} result${matches.length===1?"":"s"} for “${query}”`;
-    if($("matchSummary")) $("matchSummary").textContent=`Best match selected using title/ISSN/eISSN matching. ${matches.length>1?`${matches.length} close records were found; the strongest match is shown.`:""}`;
-    if($("searchStatus")) $("searchStatus").textContent="Complete";
   }
 
-  async function runSearch(query, autoScroll=true) {
-    const q=norm(query);
-    if(!q) return;
-    if(!DB.records.length){$("#emptyBox").innerHTML=`<div class="error">Database is still loading. Please try again in a moment.</div>`;return;}
-    $("#searchStatus").textContent="Searching…";
-    const matches=findMatches(q);
-    if(!matches.length){
-      $("#resultHead").classList.remove("hide");$("#resultsBox").classList.add("hide");$("#emptyBox").classList.remove("hide");
-      $("#resultTitle").textContent="No strong match found";$("#matchSummary").textContent=`No record matched “${q}”. Try the full title or ISSN/eISSN.`;
-      $("#emptyBox").innerHTML=`<div class="empty"><strong>No strong match found.</strong><br>Try a full journal title, ISSN or eISSN. You can also use the Google investigation button after selecting a record.</div>`;
-      $("#searchStatus").textContent="No match";
-      if(autoScroll) $("#results").scrollIntoView({behavior:"smooth",block:"start"});
+  function renderStatus(value) {
+
+    if (value === "yes") {
+      return `
+        <span class="status yes">
+          ✓ Confirmed
+        </span>
+      `;
+    }
+
+    if (value === "no") {
+      return `
+        <span class="status no">
+          × No
+        </span>
+      `;
+    }
+
+    return `
+      <span class="status unknown">
+        — Not available
+      </span>
+    `;
+  }
+
+  function renderMetric(label, value) {
+
+    return `
+      <div class="metric">
+        <small>${esc(label)}</small>
+        <strong>${esc(text(value))}</strong>
+      </div>
+    `;
+  }
+
+  /* ==========================================================
+     MAIN RESULT RENDERER
+     ========================================================== */
+
+  function renderResults(
+    journal,
+    external,
+    matches,
+    query
+  ) {
+
+    /*
+       EVERYTHING BELOW IS SELF-CONTAINED.
+       No element is assumed to exist.
+    */
+
+    const risk =
+      calculateRisk(
+        journal,
+        external
+      );
+
+    const checklist =
+      criteria(
+        journal,
+        external
+      );
+
+    const links =
+      externalLinks(
+        journal,
+        external,
+        query
+      );
+
+    const confirmed =
+      checklist.filter(
+        item => item[1] === "yes"
+      ).length;
+
+    const negative =
+      checklist.filter(
+        item => item[1] === "no"
+      ).length;
+
+    const unknown =
+      checklist.filter(
+        item => item[1] === "unknown"
+      ).length;
+
+    const riskLabel = {
+
+      low: "LOW CONCERN",
+
+      moderate:
+        "MODERATE CONCERN",
+
+      high:
+        "HIGH CONCERN",
+
+      extreme:
+        "EXTREME CONCERN"
+
+    }[risk.band];
+
+    /* Indexing */
+
+    const indexing = [
+
+      ["SCIE", journal.scie],
+
+      ["SSCI", journal.ssci],
+
+      ["AHCI", journal.ahci],
+
+      ["ESCI", journal.esci],
+
+      ["JCR 2025", journal.jcr],
+
+      ["Scopus", journal.scopus],
+
+      [
+        "Scopus Active",
+        journal.scopusActive
+      ]
+
+    ];
+
+    const indexingHTML =
+      indexing.map(
+        ([name, value]) => `
+
+          <div class="index-card">
+
+            <div class="index-name">
+              ${esc(name)}
+            </div>
+
+            ${statusBadge(value)}
+
+            ${
+              name === "Scopus"
+                ? `<small>${esc(
+                    text(
+                      journal.scopusCoverage
+                    )
+                  )}</small>`
+                : ""
+            }
+
+            ${
+              name === "Scopus Active"
+                ? `<small>${esc(
+                    text(
+                      journal.scopusType
+                    )
+                  )}</small>`
+                : ""
+            }
+
+          </div>
+
+        `
+      ).join("");
+
+    /* Metrics */
+
+    const metricsHTML = [
+
+      [
+        "SCImago SJR",
+        journal.sjr
+      ],
+
+      [
+        "SCImago Quartile",
+        journal.quartile
+      ],
+
+      [
+        "CiteScore",
+        journal.citeScore
+      ],
+
+      [
+        "SNIP",
+        journal.snip
+      ],
+
+      [
+        "H-index",
+        journal.hindex
+      ],
+
+      [
+        "Subject area",
+        journal.subject
+      ],
+
+      [
+        "OpenAlex works",
+        external.openalex?.works
+      ],
+
+      [
+        "OpenAlex citations",
+        external.openalex?.citations
+      ],
+
+      [
+        "OpenAlex H-index",
+        external.openalex?.hIndex
+      ]
+
+    ].map(
+      ([label, value]) =>
+        renderMetric(
+          label,
+          value
+        )
+    ).join("");
+
+    /* External */
+
+    const externalHTML = [
+
+      [
+        "DOAJ",
+
+        external.doaj?.found === true
+          ? "yes"
+          : external.doaj?.found === false
+            ? "no"
+            : "unknown",
+
+        external.doaj?.record?.title ||
+          "Official DOAJ verification"
+      ],
+
+      [
+        "OpenAlex",
+
+        external.openalex?.found === true
+          ? "yes"
+          : external.openalex?.found === false
+            ? "no"
+            : "unknown",
+
+        external.openalex?.displayName ||
+          "Official OpenAlex verification"
+      ],
+
+      [
+        "Crossref",
+
+        external.crossref?.found === true
+          ? "yes"
+          : external.crossref?.found === false
+            ? "no"
+            : "unknown",
+
+        external.crossref?.title ||
+          "Official Crossref verification"
+      ]
+
+    ].map(
+      ([source, state, evidence]) => `
+
+        <tr>
+
+          <td>
+            <strong>
+              ${esc(source)}
+            </strong>
+          </td>
+
+          <td>
+            ${renderStatus(state)}
+          </td>
+
+          <td>
+            ${esc(evidence)}
+          </td>
+
+        </tr>
+
+      `
+    ).join("");
+
+    /* Criteria */
+
+    const criteriaHTML =
+      checklist.map(
+        ([name, state, group]) => `
+
+          <div class="criterion">
+
+            <div>
+
+              <strong>
+                ${esc(name)}
+              </strong>
+
+              <small>
+                ${esc(group)}
+              </small>
+
+            </div>
+
+            ${renderStatus(state)}
+
+          </div>
+
+        `
+      ).join("");
+
+    /* Risk signals */
+
+    let signalsHTML = "";
+
+    if (
+      risk.signals.length
+    ) {
+
+      signalsHTML =
+        risk.signals.map(
+          signal => `
+
+            <div class="risk-signal">
+
+              <strong>
+                +${signal.points}
+                ${esc(signal.title)}
+              </strong>
+
+              <p>
+                ${esc(signal.detail)}
+              </p>
+
+            </div>
+
+          `
+        ).join("");
+
+    } else {
+
+      signalsHTML = `
+
+        <div class="notice">
+
+          <strong>
+            No major concern signal was triggered.
+          </strong>
+
+          <br>
+
+          Missing information is not treated
+          as evidence of misconduct.
+
+        </div>
+
+      `;
+    }
+
+    /* Transparency */
+
+    const transparency = [
+
+      [
+        "Peer-review policy",
+        journal.peerReview
+      ],
+
+      [
+        "Editorial board",
+        journal.editorialBoard
+      ],
+
+      [
+        "APC / fees",
+        journal.apc
+      ],
+
+      [
+        "License",
+        journal.license
+      ],
+
+      [
+        "Copyright",
+        journal.copyright
+      ],
+
+      [
+        "Publication ethics",
+        journal.ethics
+      ],
+
+      [
+        "Retraction / correction",
+        journal.retraction
+      ],
+
+      [
+        "Digital preservation",
+        journal.archiving
+      ]
+
+    ];
+
+    const transparencyHTML =
+      transparency.map(
+        ([name, value]) => `
+
+          <tr>
+
+            <td>
+              <strong>
+                ${esc(name)}
+              </strong>
+            </td>
+
+            <td>
+              ${
+                has(value)
+                  ? `<span class="status yes">
+                       ✓ Recorded
+                     </span>`
+                  : `<span class="status unknown">
+                       — Not available
+                     </span>`
+              }
+            </td>
+
+            <td>
+              ${esc(text(value))}
+            </td>
+
+          </tr>
+
+        `
+      ).join("");
+
+    /* Official site */
+
+    const official =
+      journal.website ||
+      external.openalex?.homepage ||
+      "";
+
+    const officialHTML =
+      official
+        ? `
+          <a
+            href="${esc(official)}"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open journal website ↗
+          </a>
+        `
+        : "Not available";
+
+    /* Result HTML */
+
+    const html = `
+
+      <div class="jc-result">
+
+        <!-- RESULT HEADER -->
+
+        <div class="result-top">
+
+          <div>
+
+            <div class="eyebrow">
+              BEST MATCH
+            </div>
+
+            <h2>
+              ${esc(
+                text(journal.title)
+              )}
+            </h2>
+
+            <p class="publisher">
+              ${esc(
+                text(journal.publisher)
+              )}
+            </p>
+
+          </div>
+
+          <div class="risk-box ${risk.band}">
+
+            <small>
+              CONCERN SCORE
+            </small>
+
+            <strong>
+              ${risk.score}
+              <span>/100</span>
+            </strong>
+
+            <div class="risk-label">
+              ${riskLabel}
+            </div>
+
+          </div>
+
+        </div>
+
+        <!-- IDENTITY -->
+
+        <section class="result-section">
+
+          <h3>
+            Journal identity
+          </h3>
+
+          <div class="metrics-grid">
+
+            ${renderMetric(
+              "ISSN",
+              journal.issn
+            )}
+
+            ${renderMetric(
+              "eISSN",
+              journal.eissn
+            )}
+
+            ${renderMetric(
+              "Publisher",
+              journal.publisher
+            )}
+
+            ${renderMetric(
+              "Country",
+              journal.country
+            )}
+
+            ${renderMetric(
+              "Language",
+              journal.language
+            )}
+
+            ${renderMetric(
+              "DOI / identifier",
+              journal.doi
+            )}
+
+            <div class="metric">
+
+              <small>
+                Official website
+              </small>
+
+              <strong>
+                ${officialHTML}
+              </strong>
+
+            </div>
+
+          </div>
+
+        </section>
+
+        <!-- INDEXING -->
+
+        <section class="result-section">
+
+          <h3>
+            Indexing profile
+          </h3>
+
+          <div class="index-grid">
+
+            ${indexingHTML}
+
+          </div>
+
+        </section>
+
+        <!-- METRICS -->
+
+        <section class="result-section">
+
+          <h3>
+            Journal metrics & quality
+          </h3>
+
+          <div class="metrics-grid">
+
+            ${metricsHTML}
+
+          </div>
+
+          <div class="notice">
+
+            <strong>
+              Quartile:
+            </strong>
+
+            Q1 is the highest quartile,
+            followed by Q2, Q3 and Q4
+            within the relevant subject category.
+
+            <br><br>
+
+            Values are shown only when supported
+            by the local dataset or an external
+            verification source.
+
+          </div>
+
+          <div class="external-links">
+
+            <a
+              href="${esc(links.scimago)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Verify on SCImago ↗
+            </a>
+
+            <a
+              href="${esc(links.scopus)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Verify Scopus Sources ↗
+            </a>
+
+          </div>
+
+        </section>
+
+        <!-- EXTERNAL -->
+
+        <section class="result-section">
+
+          <h3>
+            Independent confirmations
+          </h3>
+
+          <table class="data-table">
+
+            <thead>
+
+              <tr>
+
+                <th>
+                  Source
+                </th>
+
+                <th>
+                  Status
+                </th>
+
+                <th>
+                  Evidence
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              ${externalHTML}
+
+            </tbody>
+
+          </table>
+
+          <div class="external-links">
+
+            <a
+              href="${esc(links.doaj)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Check DOAJ ↗
+            </a>
+
+            <a
+              href="${esc(links.openalex)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Check OpenAlex ↗
+            </a>
+
+            <a
+              href="${esc(links.crossref)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Check Crossref ↗
+            </a>
+
+            <a
+              href="${esc(links.issn)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Check ISSN Portal ↗
+            </a>
+
+          </div>
+
+        </section>
+
+        <!-- GOOGLE -->
+
+        <section class="result-section">
+
+          <h3>
+            Web & Google investigation
+          </h3>
+
+          <p class="muted">
+
+            These searches are designed to help
+            investigate claims and warnings.
+            Google results are discovery evidence;
+            important claims should be confirmed
+            at the original source.
+
+          </p>
+
+          <div class="external-links">
+
+            <a
+              href="${esc(links.googleIndexing)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Investigate indexing claims ↗
+            </a>
+
+            <a
+              href="${esc(links.googlePredatory)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Investigate predatory / hijacked warnings ↗
+            </a>
+
+            <a
+              href="${esc(links.googleRetraction)}"
+              target="_blank"
+              rel="noopener"
+            >
+              Investigate retractions ↗
+            </a>
+
+            <a
+              href="${esc(links.google)}"
+              target="_blank"
+              rel="noopener"
+            >
+              General Google search ↗
+            </a>
+
+          </div>
+
+        </section>
+
+        <!-- RISK -->
+
+        <section class="result-section">
+
+          <h3>
+            Concern screening
+          </h3>
+
+          <div class="risk-meter">
+
+            <div
+              class="risk-fill ${risk.band}"
+              style="width:${risk.score}%"
+            ></div>
+
+          </div>
+
+          <div class="risk-scale">
+
+            <span>
+              Low
+            </span>
+
+            <span>
+              Moderate
+            </span>
+
+            <span>
+              High
+            </span>
+
+            <span>
+              Extreme
+            </span>
+
+          </div>
+
+          <div class="risk-explanation">
+
+            ${signalsHTML}
+
+          </div>
+
+        </section>
+
+        <!-- TRANSPARENCY -->
+
+        <section class="result-section">
+
+          <h3>
+            Publication transparency
+          </h3>
+
+          <table class="data-table">
+
+            <thead>
+
+              <tr>
+
+                <th>
+                  Criterion
+                </th>
+
+                <th>
+                  Status
+                </th>
+
+                <th>
+                  Recorded information
+                </th>
+
+              </tr>
+
+            </thead>
+
+            <tbody>
+
+              ${transparencyHTML}
+
+            </tbody>
+
+          </table>
+
+        </section>
+
+        <!-- COMPLETE CRITERIA -->
+
+        <section class="result-section">
+
+          <h3>
+            Complete verification checklist
+          </h3>
+
+          <p class="muted">
+
+            This section shows exactly what
+            JournalCheck found, what it did not find,
+            and what remains unavailable.
+
+          </p>
+
+          <div class="criteria-list">
+
+            ${criteriaHTML}
+
+          </div>
+
+          <div class="summary-strip">
+
+            <strong>
+              ${confirmed}
+            </strong>
+            confirmed
+
+            &nbsp; · &nbsp;
+
+            <strong>
+              ${negative}
+            </strong>
+            explicit negative
+
+            &nbsp; · &nbsp;
+
+            <strong>
+              ${unknown}
+            </strong>
+            unavailable
+
+          </div>
+
+        </section>
+
+        <!-- DECISION -->
+
+        <section class="decision-box">
+
+          <h3>
+            Researcher decision summary
+          </h3>
+
+          <p>
+
+            JournalCheck is a
+            <strong>
+              due-diligence and verification aid
+            </strong>,
+            not an automatic predatory-journal verdict.
+
+          </p>
+
+          <p>
+
+            A low concern score does not certify
+            journal quality, while a high score does
+            not by itself prove misconduct.
+
+            Critical submission requirements should
+            always be confirmed against the relevant
+            official indexing or journal source.
+
+          </p>
+
+        </section>
+
+      </div>
+
+    `;
+
+    /* ========================================================
+       SAFE RESULT TARGET
+       ======================================================== */
+
+    let resultTarget =
+      $("resultsBox");
+
+    if (!resultTarget) {
+
+      /*
+         Older/newer index.html versions may not have
+         resultsBox. Create one automatically.
+      */
+
+      resultTarget =
+        document.createElement("div");
+
+      resultTarget.id =
+        "resultsBox";
+
+      resultTarget.className =
+        "results-box";
+
+      document.body.appendChild(
+        resultTarget
+      );
+    }
+
+    resultTarget.innerHTML =
+      html;
+
+    resultTarget.classList.remove(
+      "hide"
+    );
+
+    if ($("emptyBox")) {
+      $("emptyBox").classList.add(
+        "hide"
+      );
+    }
+
+    if ($("resultHead")) {
+      $("resultHead").classList.remove(
+        "hide"
+      );
+    }
+
+    if ($("resultTitle")) {
+      $("resultTitle").textContent =
+        `${matches.length} result${
+          matches.length === 1
+            ? ""
+            : "s"
+        } for “${query}”`;
+    }
+
+    if ($("matchSummary")) {
+
+      $("matchSummary").textContent =
+        matches.length === 1
+          ? "Best match selected from the JournalCheck master database."
+          : `${matches.length} close matches found. The strongest match is shown first.`;
+    }
+
+    setStatus(
+      "Complete"
+    );
+
+    /*
+       Scroll after rendering.
+       This is the requested automatic result redirect.
+    */
+
+    setTimeout(
+      () => {
+
+        const target =
+          document.getElementById(
+            "resultsBox"
+          ) ||
+          document.getElementById(
+            "results"
+          );
+
+        if (target) {
+
+          target.scrollIntoView({
+            behavior: "smooth",
+            block: "start"
+          });
+
+        }
+
+      },
+      100
+    );
+  }
+
+  /* ==========================================================
+     SEARCH
+     ========================================================== */
+
+  async function runSearch(
+    query,
+    autoScroll = true
+  ) {
+
+    const q =
+      String(query || "").trim();
+
+    if (!q) {
+
+      if ($("journalInput")) {
+        $("journalInput").focus();
+      }
+
       return;
     }
-    current=record(matches[0]);
+
+    /*
+       NEVER leave "Searching…" indefinitely.
+    */
+
+    setStatus(
+      "Searching local database…"
+    );
+
     try {
-      const ext=await externalChecks(current);
-      render(current,ext,matches,q);
-    } catch(err) {
-      console.error("JournalCheck render error:", err);
-      if($("searchStatus")) $("searchStatus").textContent="Complete";
-      if($("resultHead")) $("resultHead").classList.remove("hide");
-      if($("resultsBox")) { $("resultsBox").classList.remove("hide"); $("resultsBox").innerHTML=`<div class="error"><strong>${esc(current.title||"Journal")} was found.</strong><br>The external enrichment layer encountered an error, but the local journal record is available. Please refresh and retry the external checks.</div>`; }
+
+      /*
+         Database must be ready first.
+      */
+
+      const loaded =
+        await loadDatabase();
+
+      if (!loaded) {
+
+        setStatus(
+          "Database error"
+        );
+
+        return;
+      }
+
+      /*
+         LOCAL SEARCH — always first.
+      */
+
+      const matches =
+        findMatches(q);
+
+      if (!matches.length) {
+
+        if ($("resultHead")) {
+          $("resultHead")
+            .classList
+            .remove("hide");
+        }
+
+        if ($("resultsBox")) {
+          $("resultsBox")
+            .classList
+            .add("hide");
+        }
+
+        if ($("emptyBox")) {
+
+          $("emptyBox")
+            .classList
+            .remove("hide");
+
+          $("emptyBox").innerHTML = `
+
+            <div class="empty">
+
+              <strong>
+                No strong match found.
+              </strong>
+
+              <br><br>
+
+              Try:
+
+              <ul>
+
+                <li>
+                  the complete journal title
+                </li>
+
+                <li>
+                  print ISSN
+                </li>
+
+                <li>
+                  eISSN
+                </li>
+
+                <li>
+                  publisher name
+                </li>
+
+              </ul>
+
+            </div>
+
+          `;
+        }
+
+        if ($("resultTitle")) {
+          $("resultTitle").textContent =
+            "No strong match found";
+        }
+
+        if ($("matchSummary")) {
+          $("matchSummary").textContent =
+            `No record matched “${q}”.`;
+        }
+
+        setStatus(
+          "No match"
+        );
+
+        return;
+      }
+
+      /*
+         IMPORTANT:
+         Render immediately.
+         The user gets a result even if every
+         external API is offline.
+      */
+
+      currentRecord =
+        normalizeRecord(
+          matches[0]
+        );
+
+      const emptyExternal = {
+
+        openalex: null,
+
+        crossref: null,
+
+        doaj: null,
+
+        retractions: null
+      };
+
+      renderResults(
+        currentRecord,
+        emptyExternal,
+        matches,
+        q
+      );
+
+      setStatus(
+        "Local result ready"
+      );
+
+      /*
+         URL update immediately.
+      */
+
+      try {
+
+        const url =
+          new URL(
+            window.location.href
+          );
+
+        url.searchParams.set(
+          "q",
+          q
+        );
+
+        history.replaceState(
+          {},
+          "",
+          url
+        );
+
+      } catch {}
+
+      saveRecent(q);
+
+      /*
+         EXTERNAL ENRICHMENT.
+         Never allowed to replace the local result
+         with an error.
+      */
+
+      setStatus(
+        "Checking external sources…"
+      );
+
+      try {
+
+        const external =
+          await externalChecks(
+            currentRecord
+          );
+
+        renderResults(
+          currentRecord,
+          external,
+          matches,
+          q
+        );
+
+        setStatus(
+          "Complete"
+        );
+
+      } catch (error) {
+
+        console.warn(
+          "External enrichment failed:",
+          error
+        );
+
+        /*
+           Local result remains visible.
+        */
+
+        setStatus(
+          "Complete — local database"
+        );
+      }
+
+      if (autoScroll) {
+
+        setTimeout(
+          () => {
+
+            const target =
+              $("resultsBox");
+
+            if (target) {
+
+              target.scrollIntoView({
+                behavior: "smooth",
+                block: "start"
+              });
+
+            }
+
+          },
+          150
+        );
+      }
+
+    } catch (error) {
+
+      console.error(
+        "JournalCheck search error:",
+        error
+      );
+
+      setStatus(
+        "Search error"
+      );
+
+      showMessage(
+        "Search could not be completed.",
+        error.message
+      );
     }
-    const url=new URL(location.href);url.searchParams.set("q",q);history.replaceState({}, "", url);
-    saveRecent(q);
-    if(autoScroll) setTimeout(()=>$("#results").scrollIntoView({behavior:"smooth",block:"start"}),60);
   }
 
-  function saveRecent(q){
-    const arr=JSON.parse(localStorage.getItem("journalcheck_recent")||"[]").filter(x=>x!==q);
-    arr.unshift(q);localStorage.setItem("journalcheck_recent",JSON.stringify(arr.slice(0,6)));renderRecent();
-  }
-  function renderRecent(){
-    const arr=JSON.parse(localStorage.getItem("journalcheck_recent")||"[]");
-    $("#recent").innerHTML=arr.length?`<span style="font-size:12px;color:var(--muted);width:100%">Recent</span>`+arr.map(x=>`<button type="button" data-q="${esc(x)}">${esc(x)}</button>`).join(""):"";
-    $("#recent").querySelectorAll("button").forEach(b=>b.addEventListener("click",()=>{$("#journalInput").value=b.dataset.q;runSearch(b.dataset.q)}));
+  /* ==========================================================
+     RECENT SEARCHES
+     ========================================================== */
+
+  function saveRecent(query) {
+
+    try {
+
+      const existing =
+        JSON.parse(
+          localStorage.getItem(
+            "journalcheck_recent"
+          ) || "[]"
+        );
+
+      const updated =
+        [
+          query,
+          ...existing.filter(
+            item =>
+              item !== query
+          )
+        ].slice(0, 8);
+
+      localStorage.setItem(
+        "journalcheck_recent",
+        JSON.stringify(updated)
+      );
+
+      renderRecent();
+
+    } catch {}
   }
 
-  window.addEventListener("DOMContentLoaded", async ()=>{
-    $("#searchForm")?.addEventListener("submit",e=>{e.preventDefault();runSearch($("#journalInput")?.value||"")});
-    $("#clearBtn")?.addEventListener("click",()=>{history.replaceState({}, "", location.pathname);if($("#journalInput")) $("#journalInput").value="";$("#resultHead")?.classList.add("hide");$("#resultsBox")?.classList.add("hide");$("#emptyBox")?.classList.remove("hide");if($("#emptyBox")) $("#emptyBox").textContent="Search for a journal title, ISSN or eISSN to begin.";if($("#searchStatus")) $("#searchStatus").textContent="Ready"});
-    $("#printBtn")?.addEventListener("click",()=>window.print());
-    $("#themeBtn")?.addEventListener("click",()=>{document.body.classList.toggle("dark");localStorage.setItem("journalcheck_theme",document.body.classList.contains("dark")?"dark":"light")});
-    if(localStorage.getItem("journalcheck_theme")==="dark") document.body.classList.add("dark");
-    renderRecent();
-    const ok=await loadDatabase();
-    const q=new URL(location.href).searchParams.get("q");
-    if(ok && q){if($("#journalInput")) $("#journalInput").value=q;await runSearch(q,true);}
-  });
+  function renderRecent() {
+
+    const container =
+      $("recent");
+
+    if (!container) {
+      return;
+    }
+
+    try {
+
+      const items =
+        JSON.parse(
+          localStorage.getItem(
+            "journalcheck_recent"
+          ) || "[]"
+        );
+
+      if (!items.length) {
+
+        container.innerHTML =
+          "";
+
+        return;
+      }
+
+      container.innerHTML = `
+
+        <span class="recent-label">
+          Recent
+        </span>
+
+        ${items.map(
+          item => `
+
+            <button
+              type="button"
+              data-query="${esc(item)}"
+            >
+              ${esc(item)}
+            </button>
+
+          `
+        ).join("")}
+
+      `;
+
+      container
+        .querySelectorAll(
+          "button"
+        )
+        .forEach(button => {
+
+          button.addEventListener(
+            "click",
+            () => {
+
+              const q =
+                button.dataset.query ||
+                "";
+
+              if ($("journalInput")) {
+
+                $("journalInput").value =
+                  q;
+
+              }
+
+              runSearch(q);
+
+            }
+          );
+
+        });
+
+    } catch {}
+  }
+
+  /* ==========================================================
+     CLEAR
+     ========================================================== */
+
+  function clearSearch() {
+
+    try {
+
+      const url =
+        new URL(
+          window.location.href
+        );
+
+      url.searchParams.delete(
+        "q"
+      );
+
+      history.replaceState(
+        {},
+        "",
+        url
+      );
+
+    } catch {}
+
+    if ($("journalInput")) {
+      $("journalInput").value =
+        "";
+    }
+
+    if ($("resultHead")) {
+      $("resultHead")
+        .classList
+        .add("hide");
+    }
+
+    if ($("resultsBox")) {
+      $("resultsBox")
+        .classList
+        .add("hide");
+    }
+
+    if ($("emptyBox")) {
+
+      $("emptyBox")
+        .classList
+        .remove("hide");
+
+      $("emptyBox").innerHTML = `
+
+        <div class="empty">
+
+          Search for a journal title,
+          ISSN or eISSN to begin.
+
+        </div>
+
+      `;
+    }
+
+    setStatus(
+      "Ready"
+    );
+  }
+
+  /* ==========================================================
+     THEME
+     ========================================================== */
+
+  function setupTheme() {
+
+    const saved =
+      localStorage.getItem(
+        "journalcheck_theme"
+      );
+
+    if (saved === "dark") {
+
+      document.body.classList.add(
+        "dark"
+      );
+    }
+
+    $("themeBtn")?.addEventListener(
+      "click",
+      () => {
+
+        document.body.classList.toggle(
+          "dark"
+        );
+
+        localStorage.setItem(
+          "journalcheck_theme",
+          document.body.classList.contains(
+            "dark"
+          )
+            ? "dark"
+            : "light"
+        );
+      }
+    );
+  }
+
+  /* ==========================================================
+     INITIALIZATION
+     ========================================================== */
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    async () => {
+
+      /*
+         SEARCH FORM
+      */
+
+      const form =
+        $("searchForm");
+
+      if (form) {
+
+        form.addEventListener(
+          "submit",
+          event => {
+
+            event.preventDefault();
+
+            const input =
+              $("journalInput");
+
+            runSearch(
+              input?.value || ""
+            );
+
+          }
+        );
+
+      } else {
+
+        /*
+           Fallback for HTML versions that
+           don't have a form.
+        */
+
+        const button =
+          document.querySelector(
+            "#checkJournalBtn, .check-journal, [data-search]"
+          );
+
+        button?.addEventListener(
+          "click",
+          event => {
+
+            event.preventDefault();
+
+            runSearch(
+              $("journalInput")?.value ||
+              ""
+            );
+
+          }
+        );
+      }
+
+      /*
+         CLEAR
+      */
+
+      $("clearBtn")?.addEventListener(
+        "click",
+        clearSearch
+      );
+
+      /*
+         PRINT
+      */
+
+      $("printBtn")?.addEventListener(
+        "click",
+        () => window.print()
+      );
+
+      /*
+         THEME
+      */
+
+      setupTheme();
+
+      /*
+         RECENT
+      */
+
+      renderRecent();
+
+      /*
+         DATABASE
+      */
+
+      const loaded =
+        await loadDatabase();
+
+      /*
+         URL QUERY
+      */
+
+      const query =
+        new URL(
+          window.location.href
+        )
+          .searchParams
+          .get("q");
+
+      if (
+        loaded &&
+        query
+      ) {
+
+        if ($("journalInput")) {
+
+          $("journalInput").value =
+            query;
+        }
+
+        await runSearch(
+          query,
+          true
+        );
+      }
+
+    }
+  );
+
 })();
